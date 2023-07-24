@@ -534,7 +534,10 @@ int main(int argc, char *argv[])
             }
 
             fflush(stdout);
-            fprintf(stdout, "\rPackets Allowed: %llu | Packets Dropped: %llu", allowed, dropped);
+            fprintf(
+                stdout, "\n %ld | Packets Allowed: %llu | Packets Dropped: %llu",
+                curTime, allowed, dropped
+            );
         
             statslastupdated = time(NULL);
         }
