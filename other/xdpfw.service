@@ -2,11 +2,10 @@
 # systemctl daemon-reload && systemctl restart xdpfw
 [Unit]
 Description=XDP Firewall tool.
-After=systemd-networkd.service
-Before=network-pre.target ufw.service
-Wants=network-pre.target ufw.service
-# After=network-online.target
-# Requires=network-online.target
+After=network-online.target
+Requires=network-online.target
+Before=ufw.service
+Wants=ufw.service
 
 [Service]
 ExecStart=/usr/bin/xdpfw
