@@ -61,14 +61,14 @@ xdpfw: utils libxdp $(OBJS)
 # XDP program chain.
 xdpfw_filter:
 	mkdir -p $(BUILDDIR)/
-	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -Ofast -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
+	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -Ofast -flto -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
 	$(LLC) -march=bpf -filetype=obj -o $(BUILDDIR)/$(XDPPROGOBJ) $(BUILDDIR)/$(XDPPROGLL)
 	
 # Utils chain.
 utils:
 	mkdir -p $(BUILDDIR)/
-	$(CC) -Ofast -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
-	$(CC) -Ofast -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
+	$(CC) -Ofast -flto -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
+	$(CC) -Ofast -flto -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
 
 # LibXDP chain.
 libxdp:
