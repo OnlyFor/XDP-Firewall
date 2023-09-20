@@ -4,8 +4,6 @@
 Description=XDP Firewall tool.
 After=network-online.target
 Requires=network-online.target
-Before=ufw.service
-Wants=ufw.service
 
 [Service]
 ExecStart=/usr/bin/xdpfw
