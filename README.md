@@ -84,7 +84,7 @@ ICMP options exist in the main filter array and start with `icmp_`. Please see b
 
 Everything besides the main `enabled` and `action` options within a filter are **not** required. This means you do not have to define them within your config.
 
-**Note** - As of right now, you can specify up to 90 maximum filters. This is due to BPF's limitations with complexity and jumps. If you want more than 90 filters, you may increase BPF limitations manually or with a patch. If you want to do this, please read [this](https://github.com/gamemann/XDP-Forwarding/tree/master/patches) README from my XDP Forwarding project. Afterwards, feel free to raise the `MAX_FILTERS` constant in the `src/xdpfw.h` [file](https://github.com/gamemann/XDP-Firewall/blob/master/src/xdpfw.h#L6) and then recompile the firewall.
+**Note** - As of right now, you can specify up to 80 maximum filters. This is due to BPF's limitations with complexity and jumps. If you want more than 80 filters, you may increase BPF limitations manually or with a patch. If you want to do this, please read [this](https://github.com/gamemann/XDP-Forwarding/tree/master/patches) README from my XDP Forwarding project. Afterwards, feel free to raise the `MAX_FILTERS` constant in the `src/xdpfw.h` [file](https://github.com/gamemann/XDP-Firewall/blob/master/src/xdpfw.h#L6) and then recompile the firewall.
 
 ## Configuration Example
 Here's an example of a config:
@@ -172,6 +172,11 @@ git checkout b54c466
 # Build and install using old commit & LibBPF.
 make && sudo make install
 ```
+
+### Issues On Ubuntu 20.04
+If you have issues on Ubuntu 20.04 or earlier, please refer to the reply on [this](https://github.com/gamemann/XDP-Firewall/issues/41#issuecomment-1758701008) issue.
+
+Basically, Clang/LLVM 12 or above is required and I'd recommend running Linux kernel 5.15 or above.
 
 ### BPF For/While Loop Support
 This project requires for/while loop support with BPF. Older kernels will not support this and output an error such as:
