@@ -46,6 +46,7 @@ XDPPROGOBJ = xdpfw_kern.o
 OBJS = $(BUILDDIR)/$(CONFIGOBJ) $(BUILDDIR)/$(CMDLINEOBJ)
 
 # LD flags and includes.
+CFLAGS += -Wno-pass-failed -Wno-error=loop-unroll -Wno-error=transform-warning
 LDFLAGS += -lconfig -lelf -lz
 INCS = -I $(LIBBPFSRC)
 INCS += -I /usr/include -I /usr/local/include
@@ -61,7 +62,7 @@ xdpfw: utils libxdp $(OBJS)
 # XDP program chain.
 xdpfw_filter:
 	mkdir -p $(BUILDDIR)/
-	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-error -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -Ofast -flto -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
+	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -Ofast -flto -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
 	$(LLC) -march=bpf -filetype=obj -o $(BUILDDIR)/$(XDPPROGOBJ) $(BUILDDIR)/$(XDPPROGLL)
 	
 # Utils chain.
