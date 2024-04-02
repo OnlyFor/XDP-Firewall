@@ -553,7 +553,7 @@ int main(int argc, char *argv[])
             statslastupdated = time(NULL);
         }
 
-        sleep(1);
+        sleep(10);
     }
 
     // Detach XDP program.
