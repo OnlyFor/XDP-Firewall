@@ -56,7 +56,7 @@ all: xdpfw xdpfw_filter utils
 # User space application chain.
 xdpfw: utils libxdp $(OBJS)
 	mkdir -p $(BUILDDIR)/
-	$(CC) $(LDFLAGS) $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
+	$(CC) -Ofast $(LDFLAGS) $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
 
 # XDP program chain.
 xdpfw_filter:
