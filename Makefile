@@ -56,7 +56,7 @@ all: xdpfw xdpfw_filter utils
 # User space application chain.
 xdpfw: utils libxdp $(OBJS)
 	mkdir -p $(BUILDDIR)/
-	$(CC) -Ofast $(LDFLAGS) $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
+	$(CC) -Ofast -flto $(LDFLAGS) $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
 
 # XDP program chain.
 xdpfw_filter:
@@ -67,8 +67,8 @@ xdpfw_filter:
 # Utils chain.
 utils:
 	mkdir -p $(BUILDDIR)/
-	$(CC) -Ofast -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
-	$(CC) -Ofast -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
+	$(CC) -Ofast -flto -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
+	$(CC) -Ofast -flto -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
 
 # LibXDP chain. We need to install objects here since our program relies on installed object files and such.
 libxdp:
