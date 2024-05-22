@@ -1,6 +1,6 @@
 CC = clang
 LLC = llc
-
+MCPU = $(shell gcc -march=native -Q --help=target | grep "mtune=    " | awk '{print $$NF}')
 ARCH := $(shell uname -m | sed 's/x86_64/x86/')
 
 # Main directories.
@@ -56,19 +56,19 @@ all: xdpfw xdpfw_filter utils
 # User space application chain.
 xdpfw: utils libxdp $(OBJS)
 	mkdir -p $(BUILDDIR)/
-	$(CC) -g0 -Ofast -march=native -mtune=native -flto $(LDFLAGS) $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
+	$(CC) -g0 -Ofast -march=$(MCPU) -mtune=$(MCPU) -flto $(LDFLAGS) $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
 
 # XDP program chain.
 xdpfw_filter:
 	mkdir -p $(BUILDDIR)/
-	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -g0 -Ofast -march=native -mtune=native -flto -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
+	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -g0 -Ofast -march=$(MCPU) -mtune=$(MCPU) -flto -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
 	$(LLC) -march=bpf -filetype=obj -o $(BUILDDIR)/$(XDPPROGOBJ) $(BUILDDIR)/$(XDPPROGLL)
 	
 # Utils chain.
 utils:
 	mkdir -p $(BUILDDIR)/
-	$(CC) -g0 -Ofast -march=native -mtune=native -flto -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
-	$(CC) -g0 -Ofast -march=native -mtune=native -flto -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
+	$(CC) -g0 -Ofast -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
+	$(CC) -g0 -Ofast -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
 
 # LibXDP chain. We need to install objects here since our program relies on installed object files and such.
 libxdp:
