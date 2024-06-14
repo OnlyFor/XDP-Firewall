@@ -479,9 +479,6 @@ int main(int argc, char *argv[])
         // Get current time.
         time_t curTime = time(NULL);
 
-        char formatted_time[20];
-        strftime(formatted_time, sizeof(formatted_time), "%Y-%m-%d %H:%M:%S", localtime(&curTime));
-
         // Check if we should end the program.
         if (endTime > 0 && curTime >= endTime)
         {
@@ -545,10 +542,7 @@ int main(int argc, char *argv[])
             }
 
             fflush(stdout);
-            fprintf(
-                stdout, "\n%s | Packets Allowed: %llu | Packets Dropped: %llu",
-                formatted_time, allowed, dropped
-            );
+            fprintf(stdout, "\rAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped);
         
             statslastupdated = time(NULL);
         }
