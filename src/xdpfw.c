@@ -546,7 +546,7 @@ int main(int argc, char *argv[])
             }
 
             fflush(stdout);
-            fprintf(stdout, "\rAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped, passed);
+            fprintf(stdout, "\nAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped, passed);
         }
 
         usleep(sleep_time);
