@@ -21,8 +21,9 @@ FILE *file;
 void setcfgdefaults(struct config *cfg)
 {
     cfg->updatetime = 0;
-    cfg->interface = "eth0";
+    cfg->interface = NULL;
     cfg->nostats = 0;
+    cfg->stdout_update_time = 1000;
 
     for (__u16 i = 0; i < MAX_FILTERS; i++)
     {
@@ -158,21 +159,23 @@ int readcfg(struct config *cfg)
     // Get auto update time.
     int updatetime;
 
-    if (!config_lookup_int(&conf, "updatetime", &updatetime))
+    if (config_lookup_int(&conf, "update_time", &updatetime) == CONFIG_TRUE)
     {
-        fprintf(stderr, "Error from LibConfig when reading 'updatetime' setting - %s\n\n", config_error_text(&conf));
-        
-        config_destroy(&conf);
-
-        return 1;    
+        cfg->updatetime = updatetime;
     }
 
-    cfg->updatetime = updatetime;
+    // Get stdout update time.
+    int stdout_update_time;
+
+    if (config_lookup_int(&conf, "stdout_update_time", &stdout_update_time) == CONFIG_TRUE)
+    {
+        cfg->stdout_update_time = stdout_update_time;
+    }
 
     // Get no stats.
     int nostats;
 
-    if (config_lookup_bool(&conf, "nostats", &nostats) == CONFIG_TRUE)
+    if (config_lookup_bool(&conf, "no_stats", &nostats) == CONFIG_TRUE)
     {
         cfg->nostats = nostats;
     }
@@ -227,7 +230,7 @@ int readcfg(struct config *cfg)
         // Source IP (not required).
         const char *sip;
 
-        if (config_setting_lookup_string(filter, "srcip", &sip))
+        if (config_setting_lookup_string(filter, "src_ip", &sip))
         {
             cfg->filters[i].srcip = inet_addr(sip);
         }
@@ -235,7 +238,7 @@ int readcfg(struct config *cfg)
         // Destination IP (not required).
         const char *dip;
 
-        if (config_setting_lookup_string(filter, "dstip", &dip))
+        if (config_setting_lookup_string(filter, "dst_ip", &dip))
         {
             cfg->filters[i].dstip = inet_addr(dip);
         }
@@ -243,7 +246,7 @@ int readcfg(struct config *cfg)
         // Source IP (IPv6) (not required).
         const char *sip6;
 
-        if (config_setting_lookup_string(filter, "srcip6", &sip6))
+        if (config_setting_lookup_string(filter, "src_ip6", &sip6))
         {
             struct in6_addr in;
 
@@ -258,7 +261,7 @@ int readcfg(struct config *cfg)
         // Destination IP (IPv6) (not required).
         const char *dip6;
 
-        if (config_setting_lookup_string(filter, "dstip6", &dip6))
+        if (config_setting_lookup_string(filter, "dst_ip6", &dip6))
         {
             struct in6_addr in;
 
@@ -336,7 +339,7 @@ int readcfg(struct config *cfg)
         // Block time (default 1).
         long long blocktime;
 
-        if (config_setting_lookup_int64(filter, "blocktime", &blocktime))
+        if (config_setting_lookup_int64(filter, "block_time", &blocktime))
         {
             cfg->filters[i].blocktime = blocktime;
         }

@@ -86,7 +86,7 @@ int xdp_prog_main(struct xdp_md *ctx)
     struct ethhdr *eth = data;
 
     // Check if the ethernet header is valid.
-    if (eth + 1 > (struct ethhdr *)data_end)
+    if (unlikely(eth + 1 > (struct ethhdr *)data_end))
     {
         return XDP_DROP;
     }
@@ -199,31 +199,35 @@ int xdp_prog_main(struct xdp_md *ctx)
         ip_stats = bpf_map_lookup_elem(&ip_stats_map, &iph->saddr);
     }
     
+    __u16 pkt_len = data_end - data;
+    
     if (ip_stats)
     {
-        // Check for reset.
-        if ((now - ip_stats->tracking) > 1000000000)
+        // Check for next update.
+        if (now > ip_stats->next_update)
         {
-            ip_stats->pps = 0;
-            ip_stats->bps = 0;
-            ip_stats->tracking = now;
+            ip_stats->pps = 1;
+            ip_stats->bps = pkt_len;
+            ip_stats->next_update = now + NANO_TO_SEC;
+        }
+        else
+        {
+            // Increment PPS and BPS using built-in functions.
+            __sync_fetch_and_add(&ip_stats->pps, 1);
+            __sync_fetch_and_add(&ip_stats->bps, pkt_len);
         }
 
-        // Increment PPS and BPS using built-in functions.
-        __sync_fetch_and_add(&ip_stats->pps, 1);
-        __sync_fetch_and_add(&ip_stats->bps, ctx->data_end - ctx->data);
-        
         pps = ip_stats->pps;
         bps = ip_stats->bps;
     }
     else
     {
         // Create new entry.
-        struct ip_stats new;
+        struct ip_stats new = {0};
 
         new.pps = 1;
-        new.bps = ctx->data_end - ctx->data;
-        new.tracking = now;
+        new.bps = pkt_len;
+        new.next_update = now + NANO_TO_SEC;
 
         pps = new.pps;
         bps = new.bps;
@@ -253,7 +257,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 tcph = (data + sizeof(struct ethhdr) + sizeof(struct ipv6hdr));
 
                 // Check TCP header.
-                if (tcph + 1 > (struct tcphdr *)data_end)
+                if (unlikely(tcph + 1 > (struct tcphdr *)data_end))
                 {
                     return XDP_DROP;
                 }
@@ -265,7 +269,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 udph = (data + sizeof(struct ethhdr) + sizeof(struct ipv6hdr));
 
                 // Check TCP header.
-                if (udph + 1 > (struct udphdr *)data_end)
+                if (unlikely(udph + 1 > (struct udphdr *)data_end))
                 {
                     return XDP_DROP;
                 }
@@ -277,7 +281,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 icmp6h = (data + sizeof(struct ethhdr) + sizeof(struct ipv6hdr));
 
                 // Check ICMPv6 header.
-                if (icmp6h + 1 > (struct icmp6hdr *)data_end)
+                if (unlikely(icmp6h + 1 > (struct icmp6hdr *)data_end))
                 {
                     return XDP_DROP;
                 }
@@ -294,7 +298,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 tcph = (data + sizeof(struct ethhdr) + (iph->ihl * 4));
 
                 // Check TCP header.
-                if (tcph + 1 > (struct tcphdr *)data_end)
+                if (unlikely(tcph + 1 > (struct tcphdr *)data_end))
                 {
                     return XDP_DROP;
                 }
@@ -306,7 +310,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 udph = (data + sizeof(struct ethhdr) + (iph->ihl * 4));
 
                 // Check TCP header.
-                if (udph + 1 > (struct udphdr *)data_end)
+                if (unlikely(udph + 1 > (struct udphdr *)data_end))
                 {
                     return XDP_DROP;
                 }
@@ -318,7 +322,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 icmph = (data + sizeof(struct ethhdr) + (iph->ihl * 4));
 
                 // Check ICMP header.
-                if (icmph + 1 > (struct icmphdr *)data_end)
+                if (unlikely(icmph + 1 > (struct icmphdr *)data_end))
                 {
                     return XDP_DROP;
                 }
@@ -589,47 +593,52 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         goto matched;
     }
+
+    if (stats)
+    {
+        stats->passed++;
+    }
             
     return XDP_PASS;
 
     matched:
-        if (action == 0)
+    if (action == 0)
+    {
+        #ifdef DEBUG
+        //bpf_printk("Matched with protocol %d and sAddr %lu.\n", iph->protocol, iph->saddr);
+        #endif
+
+        // Before dropping, update the blacklist map.
+        if (blocktime > 0)
         {
-            #ifdef DEBUG
-            //bpf_printk("Matched with protocol %d and sAddr %lu.\n", iph->protocol, iph->saddr);
-            #endif
-
-            // Before dropping, update the blacklist map.
-            if (blocktime > 0)
+            __u64 newTime = now + (blocktime * NANO_TO_SEC);
+            
+            if (iph6)
             {
-                __u64 newTime = now + (blocktime * 1000000000);
-                
-                if (iph6)
-                {
-                    bpf_map_update_elem(&ip6_blacklist_map, &srcip6, &newTime, BPF_ANY);
-                }
-                else if (iph)
-                {
-                    bpf_map_update_elem(&ip_blacklist_map, &iph->saddr, &newTime, BPF_ANY);
-                }
+                bpf_map_update_elem(&ip6_blacklist_map, &srcip6, &newTime, BPF_ANY);
             }
-
-            if (stats)
+            else if (iph)
             {
-                stats->dropped++;
-            }
-
-            return XDP_DROP;
-        }
-        else
-        {
-            if (stats)
-            {
-                stats->allowed++;
+                bpf_map_update_elem(&ip_blacklist_map, &iph->saddr, &newTime, BPF_ANY);
             }
         }
 
-        return XDP_PASS;
+        if (stats)
+        {
+            stats->dropped++;
+        }
+
+        return XDP_DROP;
+    }
+    else
+    {
+        if (stats)
+        {
+            stats->allowed++;
+        }
+    }
+
+    return XDP_PASS;
 }
 
 char _license[] SEC("license") = "GPL";

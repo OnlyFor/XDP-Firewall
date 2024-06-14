@@ -315,11 +315,6 @@ int main(int argc, char *argv[])
     struct config cfg = {0};
 
     setcfgdefaults(&cfg);
-    
-    // Create last updated variable.
-    time_t lastupdatecheck = time(NULL);
-    time_t statslastupdated = time(NULL);
-    time_t lastupdated = time(NULL);
 
     // Update config.
     updateconfig(&cfg, cmd.cfgfile);
@@ -327,9 +322,10 @@ int main(int argc, char *argv[])
     // Check for list option.
     if (cmd.list)
     {
-        fprintf(stdout, "Details:\n");
+        fprintf(stdout, "Current Settings:\n");
         fprintf(stdout, "Interface Name => %s\n", cfg.interface);
         fprintf(stdout, "Update Time => %d\n", cfg.updatetime);
+        fprintf(stdout, "Stdout Update Time => %d\n\n", cfg.stdout_update_time);
 
         for (uint16_t i = 0; i < MAX_FILTERS; i++)
         {
@@ -474,6 +470,12 @@ int main(int argc, char *argv[])
 
     unsigned int endTime = (cmd.time > 0) ? time(NULL) + cmd.time : 0;
 
+    // Create last updated variable.
+    time_t lastupdatecheck = time(NULL);
+    time_t lastupdated = time(NULL);
+
+    unsigned int sleep_time = cfg.stdout_update_time * 1000;
+
     while (cont)
     {
         // Get current time.
@@ -509,7 +511,7 @@ int main(int argc, char *argv[])
         }
 
         // Update stats.
-        if ((curTime - statslastupdated) > 2 && !cfg.nostats)
+        if (!cfg.nostats)
         {
             __u32 key = 0;
             struct stats stats[MAX_CPUS];
@@ -517,6 +519,7 @@ int main(int argc, char *argv[])
 
             __u64 allowed = 0;
             __u64 dropped = 0;
+            __u64 passed = 0;
             
             if (bpf_map_lookup_elem(statsmap, &key, stats) != 0)
             {
@@ -539,15 +542,14 @@ int main(int argc, char *argv[])
 
                 allowed += stats[i].allowed;
                 dropped += stats[i].dropped;
+                passed += stats[i].passed;
             }
 
             fflush(stdout);
-            fprintf(stdout, "\rAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped);
-        
-            statslastupdated = time(NULL);
+            fprintf(stdout, "\rAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped, passed);
         }
 
-        sleep(10);
+        usleep(sleep_time);
     }
 
     // Detach XDP program.
