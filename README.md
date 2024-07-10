@@ -1,8 +1,6 @@
-# XDP Firewall
 [![XDP Firewall Build Workflow](https://github.com/gamemann/XDP-Firewall/actions/workflows/build.yml/badge.svg)](https://github.com/gamemann/XDP-Firewall/actions/workflows/build.yml) [![XDP Firewall Run Workflow](https://github.com/gamemann/XDP-Firewall/actions/workflows/run.yml/badge.svg)](https://github.com/gamemann/XDP-Firewall/actions/workflows/run.yml)
 
-## Description
-A *stateless* firewall that attaches to the Linux kernel's [XDP](https://www.iovisor.org/technology/xdp) hook through [(e)BPF](https://ebpf.io/) for fast packet processing. This firewall is designed to read filtering rules based off of a config file on disk and filter incoming packets. Both IPv4 and **IPv6** are supported! The protocols currently supported are TCP, UDP, and ICMP. With that said, the program comes with accepted and dropped/blocked packet statistics which may be disabled if need to be.
+A *stateless* firewall that attaches to the Linux kernel's [XDP](https://www.iovisor.org/technology/xdp) hook through [(e)BPF](https://ebpf.io/) for fast packet processing. This firewall is designed to read filtering rules based off of a config file on the file system and filter incoming packets. Both IPv4 and **IPv6** are supported! The protocols currently supported are TCP, UDP, and ICMP. With that said, the program includes counters for passed and dropped packets which are written to `stdout` (may be disabled if need to be via the `no_stats` config option explained below).
 
 Additionally, if the host's network configuration or network interface card (NIC) doesn't support the XDP DRV hook (AKA native; occurs before [SKB creation](http://vger.kernel.org/~davem/skb.html)), the program will attempt to attach to the XDP SKB hook (AKA generic; occurs after SKB creation which is where IPTables and NFTables are processed via the `netfilter` kernel module). You may use overrides through the command-line to force SKB or offload modes.
 
@@ -32,68 +30,92 @@ Offloading your XDP/BPF program to your system's NIC allows for the fastest pack
 As of this time, I am not aware of any NIC manufacturers that will be able to offload this firewall completely to the NIC due to its BPF complexity. To be honest, in the current networking age, I believe it's best to leave offloaded programs to BPF map lookups and minimum packet inspection. For example, a BPF blacklist map lookup for malicious source IPs or ports. However, XDP is still very new and I would imagine we're going to see these limitations loosened or lifted in the next upcoming years. This is why I added support for offload mode on this firewall. 
 
 ## Configuration File Options
+### Data Types
+The following table quickly explains the data types used within the configuration documentation below (known data types which are not used within the configuration below will **not** be listed).
+
+| Name | Size (Bytes) | Description |
+| ---- | ---- | ----------- |
+| bool | 1 | A simple `true` or `false` field. |
+| byte | 1 | A number from `0` to `255`. |
+| string | N/A | An array of characters with no known size (values should be within quotes, `""`). |
+| uint | 4 | A number from `0` to `4294967295`. |
+| ulong | 8 | A number from `0` to `18446744073709551615 `. |
+| ushort | 2 | A number from `0` to `65535`. |
+| NULL | N/A | No address/value; Empty or 0. |
+
 ### Main
-* `interface` => The interface for the XDP program to attach to.
-* `updatetime` => How often to update the config and filtering rules. Leaving this at 0 disables auto-updating.
-* `nostats` => If true, no accepted/blocked packet statistics will be displayed in `stdout`.
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| interface | string | `NULL` | The network interface name to attach the XDP program to (usually retrieved with `ip a` or `ifconfig`). |
+| update_time | uint | `0` | How often to update the config and filtering rules from the file system in seconds (0 disables). |
+| no_stats | bool | `false` | Whether to enable or disable packet counters. Disabling packet counters will improve performance, but result in less visibility on what the XDP Firewall is doing. |
+| stdout_update_time | uint | `1000` | How often to update `stdout` when displaying packet counters in milliseconds. |
+| filters | Array of Filter Object(s) | `NULL` | An array of filters to use with the XDP Firewall. |
 
-### Filters
-Config option `filters` is an array. Each filter includes the following options:
-
-* `enabled` => If true, this rule is enabled.
-* `action` => What action to perform against the packet if matched. 0 = Block. 1 = Allow.
-* `srcip` => The source IP address the packet must match (e.g. 10.50.0.3).
-* `dstip` => The destination IP address the packet must match (e.g. 10.50.0.4).
-* `srcip6` => The source IPv6 address the packet must match (e.g. fe80::18c4:dfff:fe70:d8a6).
-* `dstip6` => The destination IPv6 address the packet must match (e.g. fe80::ac21:14ff:fe4b:3a6d).
-* `min_ttl` => The minimum TTL (time to live) the packet must match.
-* `max_ttl` => The maximum TTL (time to live) the packet must match.
-* `max_len` => The maximum packet length the packet must match. This includes the entire frame (ethernet header, IP header, L4 header, and data).
-* `min_len` => The minimum packet length the packet must match. This includes the entire frame (ethernet header, IP header, L4 header, and data).
-* `tos` => The TOS (type of service) the packet must match.
-* `pps` => The maximum packets per second a source IP can send before matching.
-* `bps` => The maximum amount of bytes per second a source IP can send before matching.
-* `blocktime` => The time in seconds to block the source IP if the rule matches and the action is block (0). Default value is `1`.
+### Filter Object
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| enabled | bool | `false` | Whether the rule is enabled or not. |
+| action | uint | `0` | The value of `0` drops or blocks the packet while `1` allows/passes the packet through. |
+| block_time | uint | `1` | The amount of seconds to block the source IP for if matched. |
+| src_ip | string | `NULL` | The source IPv4 address to match (e.g. `10.50.0.3`). |
+| dst_ip | string | `NULL` | The destination IPv4 address to match (e.g. `10.50.0.4`) |
+| src_ip6 | string | `NULL` | The source IPv6 address to match (e.g. `fe80::18c4:dfff:fe70:d8a6`). |
+| dst_ip6 | string | `NULL` | The destination IPv6 address to match (e.g. `fe80::ac21:14ff:fe4b:3a6d`). |
+| min_ttl | byte | `NULL` | The minimum TTL (time-to-live) to match. |
+| max_ttl | byte | `NULL` | The maximum TTL (time-to-live) to match. |
+| min_len | ushort | `NULL` | The minimum packet length to match (includes the entire packet including the ethernet header and payload). |
+| max_len | ushort | `NULL` | The maximum packet length to match (includes the entire packet including the ethernet header and payload). |
+| tos | byte | `NULL` | The ToS (type-of-service) to match. |
+| pps | ulong | `NULL` | Matches if this threshold of packets per second is exceeded for a source IP. |
+| bps | ulong | `NULL` | Matches if this threshold of bytes per second is exceeded for a source IP. |
 
 #### TCP Options
-TCP options exist in the main filter array and start with `tcp_`. Please see below.
+You may additionally specified TCP header options for a filter rule which start with `tcp_`.
 
-* `tcp_enabled` => If true, check for TCP-specific matches.
-* `tcp_sport` => The source port the packet must match.
-* `tcp_dport` => The destination port the packet must match.
-* `tcp_urg` => If true, the packet must have the `URG` flag set to match.
-* `tcp_ack` => If true, the packet must have the `ACK` flag set to match.
-* `tcp_rst` => If true, the packet must have the `RST` flag set to match.
-* `tcp_psh` => If true, the packet must have the `PSH` flag set to match.
-* `tcp_syn` => If true, the packet must have the `SYN` flag set to match.
-* `tcp_fin` => If true, the packet must have the `FIN` flag set to match.
-* `tcp_ece` => If true, the packet must have the `ECE` flag set to match.
-* `tcp_cwr` => If true, the packet must have the `CWR` flag set to match.
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| tcp_enabled | bool | `false` | Whether to enable TCP on this filter rule. |
+| tcp_sport | ushort | `NULL` | The TCP source port to match. |
+| tcp_dport | ushort | `NULL` | The TCP destination port to match. |
+| tcp_syn | bool | `false` | Matches if the TCP SYN flag is set. |
+| tcp_ack | bool | `false` | Matches if the TCP ACK flag is set. |
+| tcp_rst | bool | `false` | Matches if the TCP RST flag is set. |
+| tcp_psh | bool | `false` | Matches if the TCP PSH flag is set. |
+| tcp_urg | bool | `false` | Matches if the TCP URG flag is set. |
+| tcp_fin | bool | `false` | Matches if the TCP FIN flag is set. |
+| tcp_ece | bool | `false` | Matches if the TCP ECE flag is set. |
+| tcp_cwr | bool | `false` | Matches if the TCP CWR flag is set. |
 
 #### UDP Options
-UDP options exist in the main filter array and start with `udp_`. Please see below.
+You may additionally specified UDP header options for a filter rule which start with `udp_`.
 
-* `udp_enabled` => If true, check for UDP-specific matches.
-* `udp_sport` => The source port the packet must match.
-* `udp_dport` => The destination port the packet must match.
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| udp_enabled | bool | `false` | Whether to enable UDP on this filter rule. |
+| udp_sport | ushort | `NULL` | The UDP source port to match. |
+| udp_dport | ushort | `NULL` | The UDP destination port to match. |
 
 #### ICMP Options
-ICMP options exist in the main filter array and start with `icmp_`. Please see below.
+You may additionally specified UDP header options for a filter rule which start with `icmp_`.
 
-* `icmp_enabled` => If true, check for ICMP-specific matches.
-* `icmp_code` => The ICMP code the packet must match.
-* `icmp_type` => The ICMP type the packet must match.
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| icmp_enabled | bool | `false` | Whether to enable ICMP on this filter rule. |
+| icmp_code | byte | `NULL` | The ICMP code to match. |
+| icmp_type | byte | `NULL` | The ICMP type to match. |
 
-Everything besides the main `enabled` and `action` options within a filter are **not** required. This means you do not have to define them within your config.
-
-**Note** - As of right now, you can specify up to 80 maximum filters. This is due to BPF's limitations with complexity and jumps. If you want more than 80 filters, you may increase BPF limitations manually or with a patch. If you want to do this, please read [this](https://github.com/gamemann/XDP-Forwarding/tree/master/patches) README from my XDP Forwarding project. Afterwards, feel free to raise the `MAX_FILTERS` constant in the `src/xdpfw.h` [file](https://github.com/gamemann/XDP-Firewall/blob/master/src/xdpfw.h#L6) and then recompile the firewall.
+#### Notes
+* All settings within a filter rule other than `enabled` and `action` are **not** required. This means you do not have to define them within your config.
+* When a filter rule's setting is set (not `NULL`), but doesn't match the packet, the program moves onto the next filter rule. Therefore, all of the filter rule's settings that are set must match the packet in order to perform the action specified. Think of it as something like `if src_ip == "10.50.0.3" and udp_dport == 27015: action`. 
+* As of right now, you can specify up to 80 maximum filters. This is due to BPF's limitations with complexity and jumps. If you want more than 80 filters, you may increase BPF limitations manually or with a patch. If you want to do this, please read [this](https://github.com/gamemann/XDP-Forwarding/tree/master/patches) README from my XDP Forwarding project. Afterwards, feel free to raise the `MAX_FILTERS` constant in the `src/xdpfw.h` [file](https://github.com/gamemann/XDP-Firewall/blob/master/src/xdpfw.h#L6) and then recompile the firewall.
 
 ## Configuration Example
 Here's an example of a config:
 
 ```squidconf
 interface = "ens18";
-updatetime = 15;
+update_time = 15;
 
 filters = (
     {
@@ -121,7 +143,7 @@ filters = (
     {
         enabled = true,
         action = 0,
-        srcip = "10.50.0.4"
+        src_ip = "10.50.0.4"
     }
 );
 ```
@@ -159,10 +181,10 @@ make && sudo make install
 ```
 
 ## Notes
-### Move To LibXDP
-On **June 6th, 2023**, support for [LibXDP](https://github.com/xdp-project/xdp-tools/tree/master/lib/libxdp) from [XDP Tools](https://github.com/xdp-project/xdp-tools) was added. This requires additional packages and tools to install and use with this XDP firewall as noted above.
+### Moved To LibXDP
+On **June 6th, 2023**, we've moved to [LibXDP](https://github.com/xdp-project/xdp-tools/tree/master/lib/libxdp) from [XDP Tools](https://github.com/xdp-project/xdp-tools) to load the XDP/(e)BPF program. This requires additional packages and tools to install and use with this XDP firewall as noted above.
 
-If you're having issues with LibXDP, you may go back to commit [b54c466](https://github.com/gamemann/XDP-Firewall/tree/b54c46638d32306ec27aecc69a830283aef17e61) to use an older version of LibBPF that has worked for years for this XDP firewall.
+If you're having issues with LibXDP, you may go back to commit [b54c466](https://github.com/gamemann/XDP-Firewall/tree/b54c46638d32306ec27aecc69a830283aef17e61) to use an older version of LibBPF that has worked for years with this XDP firewall.
 
 ```bash
 # Make sure we're in the repository's directory.
@@ -217,14 +239,19 @@ There is a possibility I may make this firewall stateful in the future *when* I 
 
 You may also be interested in this awesome project called [FastNetMon](https://github.com/pavel-odintsov/fastnetmon)!
 
-## Other XDP Project(s)
-I just wanted to share other project(s) I've made using XDP for those interested.
+## My Other XDP Projects
+I just wanted to share other open source projects I've made which also utilize XDP (or AF_XDP sockets) for those interested. I hope code from these other projects help programmers trying to utilize XDP in their own projects!
 
 ### [XDP Forwarding](https://github.com/gamemann/XDP-Forwarding)
-This XDP project performs basic layer 3/4 forwarding using source port mapping similar to IPTables/NFTables. This is one of my newer projects and still a work in progress. I also feel the code is a lot neater in the XDP Forwarding project.
+This project performs basic layer 3/4 forwarding using source port mapping similar to IPTables/NFTables and utilizes XDP.
 
 ### [Kilimanjaro](https://github.com/gamemann/Kilimanjaro)
-This is a complex packet processing/forwarding/dropping project I made for a gaming community I was a part of that utilizes XDP, AF_XDP, and the IPIP network protocol. I no longer work on the project, but the source code should be very helpful to other XDP developers, especially when it comes to manipulating packets inside of XDP and such.
+This is a complex packet processing/forwarding/dropping project I made for a gaming community I was a part of that utilizes XDP, AF_XDP, and the IPIP network protocol. I no longer work on/maintain the project, but the source code may be very helpful to other XDP developers, especially when it comes to manipulating packets inside of XDP and such.
+
+### [Packet Batch (AF_XDP)](https://github.com/Packet-Batch/PB-AF-XDP)
+An application that utilizes fast [AF_XDP](https://docs.kernel.org/networking/af_xdp.html) Linux sockets to generate and send network packets. This is used for penetration testing including [Denial of Service](https://www.cloudflare.com/learning/ddos/glossary/denial-of-service/) (DoS), network monitoring, and more!
+
+While this application doesn't utilize native XDP or (e)BPF, I do feel it should be mentioned here. AF_XDP sockets are very fast and often used with raw XDP programs via the `bpf_redirect_map()` function call (also see my [XDP Stats](https://github.com/gamemann/XDP-Stats) project which calculates stats in raw XDP and AF_XDP programs).
 
 ## Credits
 * [Christian Deacon](https://github.com/gamemann) - Creator.
