@@ -3,7 +3,7 @@
 #include <linux/types.h>
 
 #define MAX_PCKT_LENGTH 65535
-// need to change linux source code first
+// may be need to change linux source code first
 // https://github.com/gamemann/XDP-Forwarding/tree/master/patches
 #define MAX_FILTERS 100 // 默认 80
 #define MAX_TRACK_IPS 100000
