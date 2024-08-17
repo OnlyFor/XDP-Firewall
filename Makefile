@@ -28,7 +28,8 @@ LIBBPFOBJS += $(LIBBPFSRC)/staticobjs/strset.o $(LIBBPFSRC)/staticobjs/usdt.o $(
 
 # LibXDP objects.
 # To Do: Figure out why static objects produces errors relating to unreferenced functions with dispatcher.
-LIBXDPOBJS = $(LIBXDPDIR)/sharedobjs/xsk.o $(LIBXDPDIR)/sharedobjs/libxdp.o
+# LIBXDPOBJS = $(LIBXDPDIR)/sharedobjs/xsk.o $(LIBXDPDIR)/sharedobjs/libxdp.o
+LIBXDPOBJS = $(LIBXDPDIR)/staticobjs/xsk.o $(LIBXDPDIR)/staticobjs/libxdp.o
 
 # Main program's objects.
 CONFIGSRC = config.c
