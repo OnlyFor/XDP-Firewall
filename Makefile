@@ -57,7 +57,7 @@ all: xdpfw xdpfw_filter utils
 # User space application chain.
 xdpfw: utils libxdp $(OBJS)
 	mkdir -p $(BUILDDIR)/
-	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto $(LDFLAGS) -static $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
+	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -static $(LDFLAGS) $(INCS) -o $(BUILDDIR)/$(XDPFWOUT) $(LIBBPFOBJS) $(LIBXDPOBJS) $(OBJS) $(SRCDIR)/$(XDPFWSRC)
 
 # XDP program chain.
 xdpfw_filter:
