@@ -62,14 +62,14 @@ xdpfw: utils libxdp $(OBJS)
 # XDP program chain.
 xdpfw_filter:
 	mkdir -p $(BUILDDIR)/
-	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
+	$(CC) $(INCS) -D__BPF__ -D __BPF_TRACING__ -Wno-unused-value -Wno-pointer-sign -Wno-compare-distinct-pointer-types -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -emit-llvm -c -g -o $(BUILDDIR)/$(XDPPROGLL) $(SRCDIR)/$(XDPPROGSRC)
 	$(LLC) -march=bpf -filetype=obj -o $(BUILDDIR)/$(XDPPROGOBJ) $(BUILDDIR)/$(XDPPROGLL)
 	
 # Utils chain.
 utils:
 	mkdir -p $(BUILDDIR)/
-	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
-	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
+	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
+	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
 
 # LibXDP chain. We need to install objects here since our program relies on installed object files and such.
 libxdp:
