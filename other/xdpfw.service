@@ -9,7 +9,7 @@ Requires=network-online.target
 
 # need to build first
 # lsof | grep xdpfw | grep libmimalloc
-Environment='LD_PRELOAD=/usr/local/lib/libmimalloc.so'
+# Environment='LD_PRELOAD=/usr/local/lib/libmimalloc.so'
 
 ExecStart=/usr/bin/xdpfw
 ExecStopPost=/bin/bash -c "ip link set dev $(grep -E ^interface /etc/xdpfw/xdpfw.conf | sed -En 's/^.+=|[\"; ]//gp') xdp off"
