@@ -47,7 +47,7 @@ OBJS = $(BUILDDIR)/$(CONFIGOBJ) $(BUILDDIR)/$(CMDLINEOBJ)
 
 # LD flags and includes.
 LDFLAGS += -lconfig -lelf -lz
-INCS = -I $(LIBBPFSRC)
+INCS = -I $(SRCDIR) -I $(LIBBPFSRC)
 INCS += -I /usr/include -I /usr/local/include
 
 # All chain.
@@ -67,8 +67,8 @@ xdpfw_filter:
 # Utils chain.
 utils:
 	mkdir -p $(BUILDDIR)/
-	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
-	$(CC) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
+	$(CC) $(INCS) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CONFIGOBJ) $(SRCDIR)/$(CONFIGSRC)
+	$(CC) $(INCS) -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -c -o $(BUILDDIR)/$(CMDLINEOBJ) $(SRCDIR)/$(CMDLINESRC)
 
 # LibXDP chain. We need to install objects here since our program relies on installed object files and such.
 libxdp:
