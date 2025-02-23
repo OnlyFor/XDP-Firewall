@@ -1,18 +1,14 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <getopt.h>
-
-#include "cmdline.h"
+#include <loader/utils/cmdline.h>
 
 const struct option opts[] =
 {
-    {"config", required_argument, NULL, 'c'},
-    {"offload", no_argument, NULL, 'o'},
-    {"skb", no_argument, NULL, 's'},
-    {"time", required_argument, NULL, 't'},
-    {"list", no_argument, NULL, 'l'},
-    {"help", no_argument, NULL, 'h'},
-    {NULL, 0, NULL, 0}
+    { "config", required_argument, NULL, 'c' },
+    { "offload", no_argument, NULL, 'o' },
+    { "skb", no_argument, NULL, 's' },
+    { "time", required_argument, NULL, 't' },
+    { "list", no_argument, NULL, 'l' },
+    { "help", no_argument, NULL, 'h' },
+    { NULL, 0, NULL, 0 }
 };
 
 /**
@@ -22,7 +18,7 @@ const struct option opts[] =
  * 
  * @return Void
 */
-void ParseCommandLine(struct cmdline *cmd, int argc, char *argv[])
+void ParseCommandLine(cmdline_t *cmd, int argc, char *argv[])
 {
     int c;
 
