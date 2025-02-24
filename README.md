@@ -14,22 +14,94 @@ I hope this project helps existing network engineers/programmers interested in u
 
 ![Demo](./images/demo.gif)
 
-## Command Line Usage
-The following command line arguments are supported:
+## Building & Installing
+Before building, ensure the following packages are installed. These packages can be installed with `apt` on Debian-based systems (e.g. Ubuntu, etc.), but there should be similar package names in other package managers.
 
-* `--config -c` => Location to config file. Default => **/etc/xdpfw/xdpfw.conf**.
-* `--offload -o` => Tries to load the XDP program in hardware/offload mode (please read **Offload Information** below).
-* `--skb -s` => Forces the program to load in SKB mode instead of DRV.
-* `--time -t` => How long to run the program for in seconds before exiting. 0 or not set = infinite.
-* `--list -l` => List all filtering rules scanned from config file.
-* `--help -h` => Print help menu for command line options.
+```bash
+# Install dependencies.
+sudo apt install -y libconfig-dev llvm clang libelf-dev build-essential
+
+# Install dependencies for building LibXDP and LibBPF.
+sudo apt install -y libpcap-dev m4 gcc-multilib
+
+# You need tools for your kernel since we require BPFTool. If this doesn't work, I'd suggest building BPFTool from source (https://github.com/libbpf/bpftool).
+sudo apt install -y linux-tools-$(uname -r)
+```
+
+You can use `git` to clone this project. Make sure to include the `--recursive` flag so it downloads the XDP Tools submodule!
+
+```bash
+# Clone repository via Git. Use recursive flag to download XDP Tools submodule.
+git clone --recursive https://github.com/gamemann/XDP-Firewall.git
+
+# Change directory to repository.
+cd XDP-Firewall
+```
+
+From here, you have two options to build and install this tool which are explained below.
+
+### With Bash Script
+The easiest way to build and install this tool is to use the provided [`install.sh`](./install.sh) Bash script. This script relies on `sudo` being installed on your system. If you do not have sudo, please refer to the below steps on building and installing this tool without the Bash script.
+
+If you don't have LibXDP installed on your system yet, I'd recommend using the following command.
+
+```bash
+./install.sh --libxdp
+```
+
+Otherwise, you can exclude the `--libxdp` flag if you'd like.
+
+Additionally, here is a list of flags you may pass to this script.
+
+| Name | Description |
+| ---- | ----------- |
+| --libxdp | Build and install LibXDP before building the tool. |
+| --no-install | Build the tool and/or LibXDP without installing them. |
+| --clean | Remove build files for the tool and LibXDP. |
+| --static | Statically link LibXDP and LibBPF object files when building the tool. |
+| --help | Displays help message. | 
+
+### Without Bash Script
+If you do not want to use the Bash script above, you may use `make` to build and install this tool instead.
+
+```
+# Build XDP-Tools (LibXDP and LibBPF).
+make libxdp
+
+# Install LibXDP & LibBPF onto your system.
+# Warning: This command must be executed as root! `sudo` should do this for you if you have it installed and have privileges.
+sudo libxdp_install
+
+# Build the firewall tool.
+make
+
+# Install the tool onto your system.
+# Warning: This command must be executed as root! `sudo` should do this for you if you have it installed and have privileges.
+sudo make install
+```
+
+## Command Line Usage
+The following command line arguments are supported.
+
+| Name | Default | Description |
+| ---- | ------- | ----------- |
+| -c, --config | `/etc/xdpfw/xdpfw.conf` | The path to the config file. |
+| -o, --offload | N/A | If set, attempts to load the XDP program in hardware/offload mode. |
+| -s, --skb | N/A | If set, forces the XDP program to be loaded using SKB mode instead of DRV mode. |
+| -t, --time | N/A | If set, will run the tool for this long in seconds. E.g. `--time 30` runs the tool for 30 seconds before exiting. |
+| -l, --list | N/A | If set, will print the current config values and exit. |
+| -h, --help | N/A | Prints a help message. |
 
 ### Offload Information
 Offloading your XDP/BPF program to your system's NIC allows for the fastest packet processing you can achieve due to the NIC dropping the packets with its hardware. However, for one, there are **not** many NIC manufacturers that do support this feature **and** you're limited to the NIC's memory/processing (e.g. your BPF map sizes will be extremely limited). Additionally, there are usually stricter BPF verifier limitations for offloaded BPF programs, but you may try reaching out to the NIC's manufacturer to see if they will give you a special version of their NIC driver raising these limitations (this is what I did with one manufacturer I used).
 
 As of this time, I am not aware of any NIC manufacturers that will be able to offload this firewall completely to the NIC due to its BPF complexity. To be honest, in the current networking age, I believe it's best to leave offloaded programs to BPF map lookups and minimum packet inspection. For example, a BPF blacklist map lookup for malicious source IPs or ports. However, XDP is still very new and I would imagine we're going to see these limitations loosened or lifted in the next upcoming years. This is why I added support for offload mode on this firewall. 
 
-## Configuration File Options
+## Configuration
+By default, the configuration file path is `/etc/xdpfw/xdpfw.conf`. This path may be altered with the `-c --config` CLI arguments detailed above.
+
+The [`libconfig`](https://hyperrealm.github.io/libconfig/libconfig_manual.html) library and syntax is used when parsing the config file.
+
 ### Data Types
 The following table quickly explains the data types used within the configuration documentation below (known data types which are not used within the configuration below will **not** be listed).
 
@@ -108,10 +180,10 @@ You may additionally specified UDP header options for a filter rule which start 
 #### Notes
 * All settings within a filter rule other than `enabled` and `action` are **not** required. This means you do not have to define them within your config.
 * When a filter rule's setting is set (not `NULL`), but doesn't match the packet, the program moves onto the next filter rule. Therefore, all of the filter rule's settings that are set must match the packet in order to perform the action specified. Think of it as something like `if src_ip == "10.50.0.3" and udp_dport == 27015: action`. 
-* As of right now, you can specify up to 60 total filter rules. You may increase this limit by raising the `MAX_FILTERS` constant in the `src/common/constants.h` [file](https://github.com/gamemann/XDP-Firewall/blob/master/src/common/constants.h#L4) and then recompile the firewall. If you receive a BPF program too large error, this is due to BPF's limitations with complexity and jumps. You may try increasing BPF limitations manually or with a patch. If you want to do this, please read [this](https://github.com/gamemann/XDP-Forwarding/tree/master/patches) README from my XDP Forwarding project.
+* As of right now, you can specify up to 60 total filter rules. You may increase this limit by raising the `MAX_FILTERS` constant in the `src/common/config.h` [file](https://github.com/gamemann/XDP-Firewall/blob/master/src/common/config.h#L5) and then recompile the firewall. If you receive a BPF program too large error, this is due to BPF's limitations with complexity and jumps. You may try increasing BPF limitations manually or with a patch. If you want to do this, please read [this](https://github.com/gamemann/XDP-Forwarding/tree/master/patches) README from my XDP Forwarding project.
 
-## Configuration Example
-Here's an example of a config:
+### Example
+Here's a config example:
 
 ```squidconf
 interface = "ens18";
@@ -146,38 +218,6 @@ filters = (
         src_ip = "10.50.0.4"
     }
 );
-```
-
-## Building & Installation
-Before building, ensure the following packages are installed. These packages are installed via `apt` (Ubuntu, Debian, etc.), but there should be similar package names in other package managers.
-
-```bash
-# Install dependencies.
-sudo apt install -y libconfig-dev llvm clang libelf-dev build-essential
-
-# Install dependencies for building LibXDP and LibBPF.
-sudo apt install -y libpcap-dev m4 gcc-multilib
-
-# You need tools for your kernel since we need BPFTool. If this doesn't work, I'd suggest building BPFTool from source (https://github.com/libbpf/bpftool).
-sudo apt install -y linux-tools-$(uname -r)
-```
-
-You can use `git` and `make` to build this project. The following should work:
-
-```bash
-# Clone repository via Git. Use recursive flag to download LibBPF sub-module.
-git clone --recursive https://github.com/gamemann/XDP-Firewall.git
-
-# Change directory to repository.
-cd XDP-Firewall
-
-# Build XDP-Tools and install LibXDP & LibBPF to /usr/include.
-# Warning - This command uses Sudo for root access! 
-# Feel free to remove sudo from the Makefile and execute as root otherwise.
-make libxdp
-
-# Build main project and install as root via Sudo.
-make && sudo make install
 ```
 
 ## Notes
@@ -253,7 +293,7 @@ If you receive an error similar to the one below when running the program, make 
 ./xdpfw: error while loading shared libraries: libxdp.so.1: cannot open shared object file: No such file or directory
 ```
 
-If you don't want to have LibXDP installed on your system after building the program, you can set the `LIBBPF_LIBXDP_STATIC` environmental variable to `1` while building the project with `make`. This will link all of the LibBPF and LibXDP object files while building the loader so you shouldn't need LibXDP installed globally.
+If you don't want to have LibXDP installed on your system after building the program, you can set the `LIBBPF_LIBXDP_STATIC` environmental variable to `1` while building the project with `make` or pass the `--static` flag to the [`install.sh`](./install.sh) Bash script. This will link all of the LibBPF and LibXDP object files while building the loader so you shouldn't need LibXDP installed globally.
 
 For example:
 
@@ -263,6 +303,9 @@ LIBBPF_LIBXDP_STATIC=1 make
 
 # Install onto system.
 sudo make install
+
+# Build using Bash script with static.
+./install.sh --static
 ```
 
 ## My Other XDP Projects
