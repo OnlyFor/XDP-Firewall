@@ -42,7 +42,7 @@ int CalculateStats(int stats_map, int cpus)
     }
 
     fflush(stdout);
-    fprintf(stdout, "\rAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped, passed);
+    fprintf(stdout, "\nAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped, passed);
 
     return EXIT_SUCCESS;
 }
