@@ -180,25 +180,6 @@ int main(int argc, char *argv[])
             {
                 fprintf(stderr, "[WARNING] Failed to calculate packet stats. Stats map FD => %d.\n", stats_map);
             }
-            for (int i = 0; i < cpus; i++)
-            {
-                // Although this should NEVER happen, I'm seeing very strange behavior in the following GitHub issue.
-                // https://github.com/gamemann/XDP-Firewall/issues/10
-                // Therefore, before accessing stats[i], make sure the pointer to the specific CPU ID is not NULL.
-                if (&stats[i] == NULL)
-                {
-                    fprintf(stderr, "Stats array at CPU ID #%d is NULL! Skipping...\n", i);
-
-                    continue;
-                }
-
-                allowed += stats[i].allowed;
-                dropped += stats[i].dropped;
-                passed += stats[i].passed;
-            }
-
-            fflush(stdout);
-            fprintf(stdout, "\nAllowed: %llu | Dropped: %llu | Passed: %llu", allowed, dropped, passed);
         }
 
         usleep(sleep_time);
