@@ -77,6 +77,7 @@ INCS = -I $(SRC_DIR) -I $(LIBBPF_SRC) -I /usr/include -I /usr/local/include
 # Flags.
 # FLAGS = -O2 -g
 FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto
+FLAGS_XDP = -g0 -O3 -ffast-math -mtune=$(MCPU) -flto
 FLAGS_LOADER = -lconfig -lelf -lz
 
 ifeq ($(LIBBPF_LIBXDP_STATIC), 0)
@@ -109,7 +110,7 @@ loader_utils_helpers:
 
 # XDP program.
 xdp:
-	$(CC) $(INCS) $(FLAGS) -target bpf -c -o $(BUILD_XDP_DIR)/$(XDP_OBJ) $(XDP_DIR)/$(XDP_SRC)
+	$(CC) $(INCS) $(FLAGS_XDP) -target bpf -c -o $(BUILD_XDP_DIR)/$(XDP_OBJ) $(XDP_DIR)/$(XDP_SRC)
 
 # LibXDP chain. We need to install objects here since our program relies on installed object files and such.
 libxdp:
