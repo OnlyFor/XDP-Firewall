@@ -75,8 +75,8 @@ XDP_OBJ = xdp_prog.o
 INCS = -I $(SRC_DIR) -I $(LIBBPF_SRC) -I /usr/include -I /usr/local/include
 
 # Flags.
-# FLAGS = -O2 -g
-FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto
+FLAGS = -O2 -g
+# FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto
 FLAGS_LOADER = -lconfig -lelf -lz
 
 ifeq ($(LIBBPF_LIBXDP_STATIC), 0)
