@@ -84,6 +84,10 @@ ifeq ($(LIBBPF_LIBXDP_STATIC), 0)
 	FLAGS_LOADER += -lbpf -lxdp -lconfig -lelf -lz
 endif
 
+ifeq ($(LIBBPF_LIBXDP_STATIC), 1)
+	FLAGS_LOADER += -static
+endif
+
 # All chains.
 all: loader xdp
 
