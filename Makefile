@@ -78,7 +78,7 @@ INCS = -I $(SRC_DIR) -I $(LIBBPF_SRC) -I /usr/include -I /usr/local/include
 # FLAGS = -O2 -g
 FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto
 FLAGS_XDP = -g0 -O3 -ffast-math -flto
-FLAGS_LOADER = -lconfig -lelf -lz -static -static-libgcc -static-libstdc++
+FLAGS_LOADER = -lconfig -lelf -lz
 
 ifeq ($(LIBBPF_LIBXDP_STATIC), 0)
 	FLAGS_LOADER += -lbpf -lxdp
