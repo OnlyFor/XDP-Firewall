@@ -2,7 +2,7 @@ CC = clang
 MCPU = $(shell gcc -march=native -Q --help=target | grep "mtune=    " | awk '{print $$NF}')
 ARCH := $(shell uname -m | sed 's/x86_64/x86/')
 
-LIBBPF_LIBXDP_STATIC ?= 0
+LIBXDP_STATIC ?= 1
 
 # Top-level directories.
 BUILD_DIR = build
@@ -63,7 +63,7 @@ LOADER_UTILS_HELPERS_OBJ = helpers.o
 # Loader objects.
 LOADER_OBJS = $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CONFIG_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CMDLINE_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_XDP_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_STATS_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_HELPERS_OBJ)
 
-ifeq ($(LIBBPF_LIBXDP_STATIC), 1)
+ifeq ($(LIBXDP_STATIC), 1)
 	LOADER_OBJS := $(LIBBPF_OBJS) $(LIBXDP_OBJS) $(LOADER_OBJS) /usr/local/lib/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a /usr/local/lib/libmimalloc.a
 endif
 
@@ -72,7 +72,11 @@ XDP_SRC = prog.c
 XDP_OBJ = xdp_prog.o
 
 # Includes.
-INCS = -I $(SRC_DIR) -I $(LIBBPF_SRC) -I /usr/include -I /usr/local/include
+INCS = -I $(SRC_DIR) -I /usr/include -I /usr/local/include
+
+ifeq ($(LIBXDP_STATIC), 1)
+	INCS += -I $(XDP_TOOLS_HEADERS) -I $(LIBBPF_SRC)
+endif
 
 # Flags.
 # FLAGS = -O2 -g
@@ -80,12 +84,11 @@ FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto
 FLAGS_XDP = -g -O3 -ffast-math
 FLAGS_LOADER =
 
-ifeq ($(LIBBPF_LIBXDP_STATIC), 0)
-	FLAGS_LOADER += -lbpf -lxdp -lconfig -lelf -lz
-endif
-
-ifeq ($(LIBBPF_LIBXDP_STATIC), 1)
+ifeq ($(LIBXDP_STATIC), 1)
+	FLAGS += -D__LIBXDP_STATIC__
 	FLAGS_LOADER += -static
+else
+	FLAGS_LOADER += -lbpf -lxdp -lconfig -lelf -lz
 endif
 
 # All chains.
