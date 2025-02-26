@@ -2,7 +2,7 @@
 
 // The maximum amount of filters allowed.
 // Decrease this value if you receive errors related to the BPF program being too large.
-#define MAX_FILTERS 90
+#define MAX_FILTERS 70
 
 // The maximum amount of IPs/flows to track stats for.
 // The higher this value is, the more memory that'll be used.
