@@ -68,7 +68,7 @@ LOADER_UTILS_HELPERS_OBJ = helpers.o
 LOADER_OBJS = $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CONFIG_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CMDLINE_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_XDP_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_LOGGING_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_STATS_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_HELPERS_OBJ)
 
 ifeq ($(LIBXDP_STATIC), 1)
-	LOADER_OBJS := $(LIBBPF_OBJS) $(LIBXDP_OBJS) $(LOADER_OBJS) /usr/local/lib/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a /usr/local/lib/libmimalloc.a
+	LOADER_OBJS := $(LIBBPF_OBJS) $(LIBXDP_OBJS) $(LOADER_OBJS) /usr/local/lib/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a # /usr/local/lib/libmimalloc.a
 endif
 
 # XDP directories.
@@ -90,7 +90,7 @@ FLAGS_LOADER =
 
 ifeq ($(LIBXDP_STATIC), 1)
 	FLAGS += -D__LIBXDP_STATIC__
-	FLAGS_LOADER += -static /usr/local/lib/mimalloc.o
+	FLAGS_LOADER += -static # /usr/local/lib/mimalloc.o
 else
 	FLAGS_LOADER += -lbpf -lxdp -lconfig -lelf -lz
 endif
