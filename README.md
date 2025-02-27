@@ -12,7 +12,7 @@ With that said, reasons for a host's network configuration not supporting XDP's 
 
 I hope this project helps existing network engineers/programmers interested in utilizing XDP or anybody interested in getting into those fields! (D)DoS mitigation/prevention is such an important part of Cyber Security and understanding the concept of networking and packet flow on a low-medium level would certainly help those who are pursuing a career in the field 🙂
 
-![Demo](./images/demo.gif)
+![Demo Run](./images/run.gif)
 
 ## Building & Installing
 Before building, ensure the following packages are installed. These packages can be installed with `apt` on Debian-based systems (e.g. Ubuntu, etc.), but there should be similar package names in other package managers.
@@ -59,7 +59,10 @@ Additionally, here is a list of flags you may pass to this script.
 | --no-install | Build the tool and/or LibXDP without installing them. |
 | --clean | Remove build files for the tool and LibXDP. |
 | --no-static | Do *not* statically link LibXDP and LibBPF object files when building the tool. This makes the build process faster, but you may need to alter your `LD_LIBRARY_PATH` env variable before running the tool and requires LibXDP to be installed on your system already. |
-| --help | Displays help message. | 
+| --objdump | Dumps the XDP/BPF object file using [`llvm-objdump`](https://llvm.org/docs/CommandGuide/llvm-objdump.html) to Assemby into `objdump.asm`. |
+| --help | Displays help message. |
+
+![Script Build Demo](./images/build_script.gif)
 
 ### Without Bash Script
 If you do not want to use the Bash script above, you may use `make` to build and install this tool instead.
@@ -80,8 +83,10 @@ make
 sudo make install
 ```
 
+![Script Build Demo](./images/build_make.gif)
+
 ## Command Line Usage
-The following command line arguments are supported.
+The following general command line arguments are supported.
 
 | Name | Default | Description |
 | ---- | ------- | ----------- |
@@ -91,6 +96,18 @@ The following command line arguments are supported.
 | -t, --time | N/A | If set, will run the tool for this long in seconds. E.g. `--time 30` runs the tool for 30 seconds before exiting. |
 | -l, --list | N/A | If set, will print the current config values and exit. |
 | -h, --help | N/A | Prints a help message. |
+
+Additionally, there are command line overrides for base config options.
+
+| Name | Example | Description |
+| ---- | ------- | ----------- |
+| -v, --verbose | `-v 3` | Overrides the config's verbose value. |
+| --log-file | `--log-file ./test.log` | Overrides the config's log file value. |
+| -i, --interface | `-i enp1s0` | Overrides the config's interface value. |
+| -u, --update-time | `-u 30` | Overrides the config's update time value. |
+| -n, --no-stats | `-n 1` | Overrides the config's no stats value. |
+| --stats-ps | `--stats-ps 1` | Overrides the config's stats per second value. |
+| --stdout-ut | `--stdout-ut 500` | Overrides the config's stdout update time value. |
 
 ### Offload Information
 Offloading your XDP/BPF program to your system's NIC allows for the fastest packet processing you can achieve due to the NIC dropping the packets with its hardware. However, for one, there are **not** many NIC manufacturers that do support this feature **and** you're limited to the NIC's memory/processing (e.g. your BPF map sizes will be extremely limited). Additionally, there are usually stricter BPF verifier limitations for offloaded BPF programs, but you may try reaching out to the NIC's manufacturer to see if they will give you a special version of their NIC driver raising these limitations (this is what I did with one manufacturer I used).
@@ -118,17 +135,21 @@ The following table quickly explains the data types used within the configuratio
 ### Main
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
+| verbose | int | `2` | The verbose level for logging (0 - 5 supported so far). |
+| log_file | string | `/var/log/xdpfw/xdpfw.log` | The log file location. If the string is empty (`""`), the log file is disabled. |
 | interface | string | `NULL` | The network interface name to attach the XDP program to (usually retrieved with `ip a` or `ifconfig`). |
 | update_time | uint | `0` | How often to update the config and filtering rules from the file system in seconds (0 disables). |
 | no_stats | bool | `false` | Whether to enable or disable packet counters. Disabling packet counters will improve performance, but result in less visibility on what the XDP Firewall is doing. |
+| stats_per_second | bool | `false` | If true, packet counters and stats are calculated per second. `stdout_update_time` must be 1000 or less for this to work properly. |
 | stdout_update_time | uint | `1000` | How often to update `stdout` when displaying packet counters in milliseconds. |
 | filters | Array of Filter Object(s) | `NULL` | An array of filters to use with the XDP Firewall. |
 
 ### Filter Object
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| enabled | bool | `false` | Whether the rule is enabled or not. |
-| action | uint | `0` | The value of `0` drops or blocks the packet while `1` allows/passes the packet through. |
+| enabled | bool | `true` | Whether the rule is enabled or not. |
+| log | bool | `false` | Whether to log packets that are matched. |
+| action | uint | `1` | The value of `0` drops or blocks the packet while `1` allows/passes the packet through. |
 | block_time | uint | `1` | The amount of seconds to block the source IP for if matched. |
 | src_ip | string | `NULL` | The source IPv4 address to match (e.g. `10.50.0.3`). CIDRs are also supported (e.g. `10.50.0.0/24`)! |
 | dst_ip | string | `NULL` | The destination IPv4 address to match (e.g. `10.50.0.4`). CIDRs are also supported (e.g. `10.50.0.0/24`)! |
@@ -186,8 +207,12 @@ You may additionally specified UDP header options for a filter rule which start 
 Here's a config example.
 
 ```squidconf
+verbose = 5;
+log_file = "";
 interface = "ens18";
 update_time = 15;
+no_stats = false;
+stats_per_second = true;
 
 filters = (
     {
@@ -300,6 +325,22 @@ export LD_LIBRARY_PATH=/usr/local/lib
 
 sudo xdpfw
 ```
+
+### Filter Logging
+This tool uses `bpf_ringbuf_reserve()` and `bpf_ringbuf_submit()` for filter match logging. At this time, there is no rate limit for the amount of log messages that may be sent. Therefore, if you're encountering a spoofed attack that is matching a filter rule with logging enabled, it will cause additional processing and disk load.
+
+I recommend only enabling filter logging at this time for debugging. If you'd like to disable filter logging entirely (which will improve performance slightly), you may comment out the `ENABLE_FILTER_LOGGING` line [here](https://github.com/gamemann/XDP-Firewall/blob/master/src/common/config.h#L27).
+
+```C
+//#define ENABLE_FILTER_LOGGING
+```
+
+I will most likely implement functionality to rate limit log messages from XDP in the future.
+
+### LibBPF Logging
+When loading the BPF/XDP program through LibXDP/LibBPF, logging is disabled unless if the `verbose` log setting is set to `5` or higher.
+
+If the tool fails to load or attach the XDP program, it is recommended you set `verbose` to 5 or above so LibXDP outputs specific warnings and errors.
 
 ## My Other XDP Projects
 I just wanted to share other open source projects I've made which also utilize XDP (or AF_XDP sockets) for those interested. I hope code from these other projects help programmers trying to utilize XDP in their own projects!

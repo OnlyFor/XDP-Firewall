@@ -1,7 +1,5 @@
 #include <loader/utils/config.h>
 
-#include <loader/utils/helpers.h>
-
 static FILE *file;
 
 /**
@@ -9,10 +7,11 @@ static FILE *file;
  * 
  * @param cfg A pointer to the config structure.
  * @param cfg_file The path to the config file.
+ * @param overrides Overrides to use instead of config values.
  * 
  * @return 0 on success or 1 on error.
  */
-int LoadConfig(config__t *cfg, char *cfg_file)
+int LoadConfig(config__t *cfg, char *cfg_file, config_overrides_t* overrides)
 {
     // Open config file.
     if (OpenCfg(cfg_file) != 0)
@@ -27,7 +26,7 @@ int LoadConfig(config__t *cfg, char *cfg_file)
     memset(cfg->filters, 0, sizeof(cfg->filters));
 
     // Read config and check for errors.
-    if (ReadCfg(cfg) != 0)
+    if (ReadCfg(cfg, overrides) != 0)
     {
         fprintf(stderr, "Error reading config file.\n");
 
@@ -46,67 +45,72 @@ int LoadConfig(config__t *cfg, char *cfg_file)
  */
 void SetCfgDefaults(config__t *cfg)
 {
-    cfg->updatetime = 0;
+    cfg->verbose = 2;
+    cfg->log_file = strdup("/var/log/xdpfw/xdpfw.log");
+    cfg->update_time = 0;
     cfg->interface = NULL;
-    cfg->nostats = 0;
+    cfg->no_stats = 0;
+    cfg->stats_per_second = 0;
     cfg->stdout_update_time = 1000;
 
     for (int i = 0; i < MAX_FILTERS; i++)
     {
-        cfg->filters[i].id = 0;
-        cfg->filters[i].enabled = 0;
-        cfg->filters[i].action = 0;
-        cfg->filters[i].src_ip = 0;
-        cfg->filters[i].dst_ip = 0;
+        filter_t* filter = &cfg->filters[i];
 
-        for (int j = 0; j < 4; j++)
-        {
-            cfg->filters[i].src_ip6[j] = 0;
-            cfg->filters[i].dst_ip6[j] = 0;
-        }
+        filter->id = 0;
+        filter->enabled = 1;
 
-        cfg->filters[i].do_min_len = 0;
-        cfg->filters[i].min_len = 0;
+        filter->log = 0;
 
-        cfg->filters[i].do_max_len = 0;
-        cfg->filters[i].max_len = 65535;
+        filter->action = 1;
+        filter->src_ip = 0;
+        filter->dst_ip = 0;
 
-        cfg->filters[i].do_min_ttl = 0;
-        cfg->filters[i].min_ttl = 0;
+        memset(filter->src_ip6, 0, 4);
+        memset(filter->dst_ip6, 0, 4);
 
-        cfg->filters[i].do_max_ttl = 0;
-        cfg->filters[i].max_ttl = 255;
+        filter->do_min_len = 0;
+        filter->min_len = 0;
 
-        cfg->filters[i].do_tos = 0;
-        cfg->filters[i].tos = 0;
+        filter->do_max_len = 0;
+        filter->max_len = 65535;
 
-        cfg->filters[i].do_pps = 0;
-        cfg->filters[i].pps = 0;
+        filter->do_min_ttl = 0;
+        filter->min_ttl = 0;
+
+        filter->do_max_ttl = 0;
+        filter->max_ttl = 255;
+
+        filter->do_tos = 0;
+        filter->tos = 0;
+
+        filter->do_pps = 0;
+        filter->pps = 0;
         
-        cfg->filters[i].do_bps = 0;
-        cfg->filters[i].bps = 0;
+        filter->do_bps = 0;
+        filter->bps = 0;
 
-        cfg->filters[i].blocktime = 1;
+        filter->blocktime = 1;
         
-        cfg->filters[i].tcpopts.enabled = 0;
-        cfg->filters[i].tcpopts.do_dport = 0;
-        cfg->filters[i].tcpopts.do_dport = 0;
-        cfg->filters[i].tcpopts.do_urg = 0;
-        cfg->filters[i].tcpopts.do_ack = 0;
-        cfg->filters[i].tcpopts.do_rst = 0;
-        cfg->filters[i].tcpopts.do_psh = 0;
-        cfg->filters[i].tcpopts.do_syn = 0;
-        cfg->filters[i].tcpopts.do_fin = 0;
-        cfg->filters[i].tcpopts.do_ece = 0;
-        cfg->filters[i].tcpopts.do_cwr = 0;
+        filter->tcpopts.enabled = 0;
+        filter->tcpopts.do_dport = 0;
+        filter->tcpopts.do_dport = 0;
+        filter->tcpopts.do_urg = 0;
+        filter->tcpopts.do_ack = 0;
+        filter->tcpopts.do_rst = 0;
+        filter->tcpopts.do_psh = 0;
+        filter->tcpopts.do_syn = 0;
+        filter->tcpopts.do_fin = 0;
+        filter->tcpopts.do_ece = 0;
+        filter->tcpopts.do_cwr = 0;
 
-        cfg->filters[i].udpopts.enabled = 0;
-        cfg->filters[i].udpopts.do_sport = 0;
-        cfg->filters[i].udpopts.do_dport = 0;
+        filter->udpopts.enabled = 0;
+        filter->udpopts.do_sport = 0;
+        filter->udpopts.do_dport = 0;
 
-        cfg->filters[i].icmpopts.enabled = 0;
-        cfg->filters[i].icmpopts.do_code = 0;
-        cfg->filters[i].icmpopts.do_type = 0;
+        filter->icmpopts.enabled = 0;
+        filter->icmpopts.do_code = 0;
+        filter->icmpopts.do_type = 0;
     }
 }
 
@@ -141,10 +145,11 @@ int OpenCfg(const char *file_name)
  * Read the config file and stores values in config structure.
  * 
  * @param cfg A pointer to the config structure.
+ * @param overrides Overrides to use instead of config values.
  * 
  * @return 0 on success or 1/-1 on error.
  */
-int ReadCfg(config__t *cfg)
+int ReadCfg(config__t *cfg, config_overrides_t* overrides)
 {
     // Not sure why this would be set to NULL after checking for it in OpenConfig(), but just for safety.
     if (file == NULL)
@@ -161,49 +166,143 @@ int ReadCfg(config__t *cfg)
     // Attempt to read the config.
     if (config_read(&conf, file) == CONFIG_FALSE)
     {
-        fprintf(stderr, "Error from LibConfig when reading file - %s (Line %d)\n\n", config_error_text(&conf), config_error_line(&conf));
+        LogMsg(cfg, 0, 1, "Error from LibConfig when reading file - %s (Line %d)", config_error_text(&conf), config_error_line(&conf));
 
         config_destroy(&conf);
 
         return EXIT_FAILURE;
     }
 
+    int verbose;
+
+    if (config_lookup_int(&conf, "verbose", &verbose) == CONFIG_TRUE || overrides->verbose > -1)
+    {
+        if (overrides->verbose > -1)
+        {
+            cfg->verbose = overrides->verbose;
+        }
+        else
+        {
+            cfg->verbose = verbose;
+        }
+    }
+
+    const char* log_file;
+
+    if (config_lookup_string(&conf, "log_file", &log_file) == CONFIG_TRUE || overrides->log_file != NULL)
+    {
+        // We must free previous value to prevent memory leak.
+        if (cfg->log_file != NULL)
+        {
+            free(cfg->log_file);
+            cfg->log_file = NULL;
+        }
+
+        if (overrides->log_file != NULL)
+        {
+            if (strlen(overrides->log_file) > 0)
+            {
+                cfg->log_file = strdup(overrides->log_file);
+                
+            }
+            else
+            {
+                cfg->log_file = NULL;
+            }
+        }
+        else
+        {
+            if (strlen(log_file) > 0)
+            {
+                cfg->log_file = strdup(log_file);
+            }
+            else
+            {
+                cfg->log_file = NULL;
+            }
+        }
+    }
+
     // Get interface.
     const char *interface;
 
-    if (!config_lookup_string(&conf, "interface", &interface))
+    if (config_lookup_string(&conf, "interface", &interface) == CONFIG_TRUE || overrides->interface != NULL)
     {
-        fprintf(stderr, "Error from LibConfig when reading 'interface' setting - %s\n\n", config_error_text(&conf));
-        
-        config_destroy(&conf);
+        // We must free previous value to prevent memory leak.
+        if (cfg->interface != NULL)
+        {
+            free(cfg->interface);
+            cfg->interface = NULL;
+        }
 
-        return EXIT_FAILURE;    
+        if (overrides->interface != NULL)
+        {
+            cfg->interface = strdup(overrides->interface);
+        }
+        else
+        {
+            cfg->interface = strdup(interface);
+        }
     }
 
-    cfg->interface = strdup(interface);
-
     // Get auto update time.
-    int updatetime;
+    int update_time;
 
-    if (config_lookup_int(&conf, "update_time", &updatetime) == CONFIG_TRUE)
+    if (config_lookup_int(&conf, "update_time", &update_time) == CONFIG_TRUE || overrides->update_time > -1)
     {
-        cfg->updatetime = updatetime;
+        if (overrides->update_time > -1)
+        {
+            cfg->update_time = overrides->update_time;
+        }
+        else
+        {
+            cfg->update_time = update_time;
+        }
+    }
+
+    // Get no stats.
+    int no_stats;
+
+    if (config_lookup_bool(&conf, "no_stats", &no_stats) == CONFIG_TRUE || overrides->no_stats > -1)
+    {
+        if (overrides->no_stats > -1)
+        {
+            cfg->no_stats = overrides->no_stats;
+        }
+        else
+        {
+            cfg->no_stats = no_stats;
+        }
+    }
+
+    // Stats per second.
+    int stats_per_second;
+
+    if (config_lookup_bool(&conf, "stats_per_second", &stats_per_second) == CONFIG_TRUE || overrides->stats_per_second > -1)
+    {
+        if (overrides->stats_per_second > -1)
+        {
+            cfg->stats_per_second = overrides->stats_per_second;
+        }
+        else
+        {
+            cfg->stats_per_second = stats_per_second;
+        }
     }
 
     // Get stdout update time.
     int stdout_update_time;
 
-    if (config_lookup_int(&conf, "stdout_update_time", &stdout_update_time) == CONFIG_TRUE)
+    if (config_lookup_int(&conf, "stdout_update_time", &stdout_update_time) == CONFIG_TRUE || overrides->stdout_update_time > -1)
     {
-        cfg->stdout_update_time = stdout_update_time;
-    }
-
-    // Get no stats.
-    int nostats;
-
-    if (config_lookup_bool(&conf, "no_stats", &nostats) == CONFIG_TRUE)
-    {
-        cfg->nostats = nostats;
+        if (overrides->stdout_update_time > -1)
+        {
+            cfg->stdout_update_time = overrides->stdout_update_time;
+        }
+        else
+        {
+            cfg->stdout_update_time = stdout_update_time;
+        }
     }
 
     // Read filters in filters_map structure.
@@ -212,7 +311,7 @@ int ReadCfg(config__t *cfg)
     // Check if filters map is valid. If not, not a biggie since they aren't required.
     if (setting == NULL)
     {
-        fprintf(stderr, "Error from LibConfig when reading 'filters' array - %s\n\n", config_error_text(&conf));
+        LogMsg(cfg, 0, 1, "Error from LibConfig when reading 'filters' array - %s.", config_error_text(&conf));
         
         config_destroy(&conf);
 
@@ -224,312 +323,318 @@ int ReadCfg(config__t *cfg)
 
     for (int i = 0; i < config_setting_length(setting); i++)
     {
-        config_setting_t* filter = config_setting_get_elem(setting, i);
+        filter_t* filter = &cfg->filters[i];
+
+        config_setting_t* filter_cfg = config_setting_get_elem(setting, i);
+
+        if (filter == NULL || filter_cfg == NULL)
+        {
+            LogMsg(cfg, 0, 1, "[WARNING] Failed to read filter rule at index #%d. 'filter' or 'filter_cfg' is NULL (make sure you didn't exceed the maximum filters allowed!)...");
+
+            continue;
+        }
 
         // Enabled.
         int enabled;
 
-        if (config_setting_lookup_bool(filter, "enabled",  &enabled) == CONFIG_FALSE)
+        if (config_setting_lookup_bool(filter_cfg, "enabled",  &enabled) == CONFIG_TRUE)
         {
-            // Print error and stop from existing this rule any further.
-            fprintf(stderr, "Error from LibConfig when reading 'enabled' setting from filters array #%d. Error - %s\n\n", filters, config_error_text(&conf));
-
-            continue;
+            filter->enabled = enabled;
         }
 
-        cfg->filters[i].enabled = enabled;
+        // Log.
+        int log;
+
+        if (config_setting_lookup_bool(filter_cfg, "log", &log) == CONFIG_TRUE)
+        {
+            filter->log = log;
+        }
 
         // Action (required).
         int action;
 
-        if (config_setting_lookup_int(filter, "action", &action) == CONFIG_FALSE)
+        if (config_setting_lookup_int(filter_cfg, "action", &action) == CONFIG_TRUE)
         {
-            fprintf(stderr, "Error from LibConfig when reading 'action' setting from filters array #%d. Error - %s\n\n", filters, config_error_text(&conf));
-
-            cfg->filters[i].enabled = 0;
-
-            continue;
+            filter->action = action;
         }
-
-        cfg->filters[i].action = action;
 
         // Source IP (not required).
         const char *sip;
 
-        if (config_setting_lookup_string(filter, "src_ip", &sip))
+        if (config_setting_lookup_string(filter_cfg, "src_ip", &sip) == CONFIG_TRUE)
         {
             ip_range_t ip = ParseIpCidr(sip);
 
-            cfg->filters[i].src_ip = ip.ip;
-            cfg->filters[i].src_cidr = ip.cidr;
+            filter->src_ip = ip.ip;
+            filter->src_cidr = ip.cidr;
         }
 
         // Destination IP (not required).
         const char *dip;
 
-        if (config_setting_lookup_string(filter, "dst_ip", &dip))
+        if (config_setting_lookup_string(filter_cfg, "dst_ip", &dip) == CONFIG_TRUE)
         {
             ip_range_t ip = ParseIpCidr(dip);
 
-            cfg->filters[i].dst_ip = ip.ip;
-            cfg->filters[i].dst_cidr = ip.cidr;
+            filter->dst_ip = ip.ip;
+            filter->dst_cidr = ip.cidr;
         }
 
         // Source IP (IPv6) (not required).
         const char *sip6;
 
-        if (config_setting_lookup_string(filter, "src_ip6", &sip6))
+        if (config_setting_lookup_string(filter_cfg, "src_ip6", &sip6) == CONFIG_TRUE)
         {
             struct in6_addr in;
 
             inet_pton(AF_INET6, sip6, &in);
 
-            memcpy(cfg->filters[i].src_ip6, in.__in6_u.__u6_addr32, 4);
+            memcpy(filter->src_ip6, in.__in6_u.__u6_addr32, 4);
         }
 
         // Destination IP (IPv6) (not required).
         const char *dip6;
 
-        if (config_setting_lookup_string(filter, "dst_ip6", &dip6))
+        if (config_setting_lookup_string(filter_cfg, "dst_ip6", &dip6) == CONFIG_TRUE)
         {
             struct in6_addr in;
 
             inet_pton(AF_INET6, dip6, &in);
 
-            memcpy(cfg->filters[i].dst_ip6, in.__in6_u.__u6_addr32, 4);
+            memcpy(filter->dst_ip6, in.__in6_u.__u6_addr32, 4);
         }
 
         // Minimum TTL (not required).
         int min_ttl;
 
-        if (config_setting_lookup_int(filter, "min_ttl", &min_ttl))
+        if (config_setting_lookup_int(filter_cfg, "min_ttl", &min_ttl) == CONFIG_TRUE)
         {
-            cfg->filters[i].min_ttl = (u8)min_ttl;
-            cfg->filters[i].do_min_ttl = 1;
+            filter->min_ttl = (u8)min_ttl;
+            filter->do_min_ttl = 1;
         }
 
         // Maximum TTL (not required).
         int max_ttl;
 
-        if (config_setting_lookup_int(filter, "max_ttl", &max_ttl))
+        if (config_setting_lookup_int(filter_cfg, "max_ttl", &max_ttl) == CONFIG_TRUE)
         {
-            cfg->filters[i].max_ttl = (u8)max_ttl;
-            cfg->filters[i].do_max_ttl = 1;
+            filter->max_ttl = (u8)max_ttl;
+            filter->do_max_ttl = 1;
         }
 
         // Minimum length (not required).
         int min_len;
 
-        if (config_setting_lookup_int(filter, "min_len", &min_len))
+        if (config_setting_lookup_int(filter_cfg, "min_len", &min_len) == CONFIG_TRUE)
         {
-            cfg->filters[i].min_len = min_len;
-            cfg->filters[i].do_min_len = 1;
+            filter->min_len = min_len;
+            filter->do_min_len = 1;
         }
 
         // Maximum length (not required).
         int max_len;
 
-        if (config_setting_lookup_int(filter, "max_len", &max_len))
+        if (config_setting_lookup_int(filter_cfg, "max_len", &max_len) == CONFIG_TRUE)
         {
-            cfg->filters[i].max_len = max_len;
-            cfg->filters[i].do_max_len = 1;
+            filter->max_len = max_len;
+            filter->do_max_len = 1;
         }
 
         // TOS (not required).
         int tos;
 
-        if (config_setting_lookup_int(filter, "tos", &tos))
+        if (config_setting_lookup_int(filter_cfg, "tos", &tos) == CONFIG_TRUE)
         {
-            cfg->filters[i].tos = (u8)tos;
-            cfg->filters[i].do_tos = 1;
+            filter->tos = (u8)tos;
+            filter->do_tos = 1;
         }
 
         // PPS (not required).
         long long pps;
 
-        if (config_setting_lookup_int64(filter, "pps", &pps))
+        if (config_setting_lookup_int64(filter_cfg, "pps", &pps) == CONFIG_TRUE)
         {
-            cfg->filters[i].pps = pps;
-            cfg->filters[i].do_pps = 1;
+            filter->pps = pps;
+            filter->do_pps = 1;
         }
 
         // BPS (not required).
         long long bps;
 
-        if (config_setting_lookup_int64(filter, "bps", &bps))
+        if (config_setting_lookup_int64(filter_cfg, "bps", &bps) == CONFIG_TRUE)
         {
-            cfg->filters[i].bps = bps;
-            cfg->filters[i].do_bps = 1;
+            filter->bps = bps;
+            filter->do_bps = 1;
         }
 
         // Block time (default 1).
         long long blocktime;
 
-        if (config_setting_lookup_int64(filter, "block_time", &blocktime))
+        if (config_setting_lookup_int64(filter_cfg, "block_time", &blocktime) == CONFIG_TRUE)
         {
-            cfg->filters[i].blocktime = blocktime;
+            filter->blocktime = blocktime;
         }
         else
         {
-            cfg->filters[i].blocktime = 1;
+            filter->blocktime = 1;
         }
 
         /* TCP options */
         // Enabled.
         int tcpenabled;
 
-        if (config_setting_lookup_bool(filter, "tcp_enabled", &tcpenabled))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_enabled", &tcpenabled) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.enabled = tcpenabled;
+            filter->tcpopts.enabled = tcpenabled;
         }
 
         // Source port.
         long long tcpsport;
 
-        if (config_setting_lookup_int64(filter, "tcp_sport", &tcpsport))
+        if (config_setting_lookup_int64(filter_cfg, "tcp_sport", &tcpsport) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.sport = (u16)tcpsport;
-            cfg->filters[i].tcpopts.do_sport = 1;
+            filter->tcpopts.sport = (u16)tcpsport;
+            filter->tcpopts.do_sport = 1;
         }
 
         // Destination port.
         long long tcpdport;
 
-        if (config_setting_lookup_int64(filter, "tcp_dport", &tcpdport))
+        if (config_setting_lookup_int64(filter_cfg, "tcp_dport", &tcpdport) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.dport = (u16)tcpdport;
-            cfg->filters[i].tcpopts.do_dport = 1;
+            filter->tcpopts.dport = (u16)tcpdport;
+            filter->tcpopts.do_dport = 1;
         }
 
         // URG flag.
         int tcpurg;
 
-        if (config_setting_lookup_bool(filter, "tcp_urg", &tcpurg))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_urg", &tcpurg) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.urg = tcpurg;
-            cfg->filters[i].tcpopts.do_urg = 1;
+            filter->tcpopts.urg = tcpurg;
+            filter->tcpopts.do_urg = 1;
         }
 
         // ACK flag.
         int tcpack;
 
-        if (config_setting_lookup_bool(filter, "tcp_ack", &tcpack))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_ack", &tcpack) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.ack = tcpack;
-            cfg->filters[i].tcpopts.do_ack = 1;
+            filter->tcpopts.ack = tcpack;
+            filter->tcpopts.do_ack = 1;
         }
         
 
         // RST flag.
         int tcprst;
 
-        if (config_setting_lookup_bool(filter, "tcp_rst", &tcprst))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_rst", &tcprst) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.rst = tcprst;
-            cfg->filters[i].tcpopts.do_rst = 1;
+            filter->tcpopts.rst = tcprst;
+            filter->tcpopts.do_rst = 1;
         }
 
         // PSH flag.
         int tcppsh;
 
-        if (config_setting_lookup_bool(filter, "tcp_psh", &tcppsh))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_psh", &tcppsh) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.psh = tcppsh;
-            cfg->filters[i].tcpopts.do_psh = 1;
+            filter->tcpopts.psh = tcppsh;
+            filter->tcpopts.do_psh = 1;
         }
 
         // SYN flag.
         int tcpsyn;
 
-        if (config_setting_lookup_bool(filter, "tcp_syn", &tcpsyn))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_syn", &tcpsyn) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.syn = tcpsyn;
-            cfg->filters[i].tcpopts.do_syn = 1;
+            filter->tcpopts.syn = tcpsyn;
+            filter->tcpopts.do_syn = 1;
         }
 
         // FIN flag.
         int tcpfin;
 
-        if (config_setting_lookup_bool(filter, "tcp_fin", &tcpfin))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_fin", &tcpfin) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.fin = tcpfin;
-            cfg->filters[i].tcpopts.do_fin = 1;
+            filter->tcpopts.fin = tcpfin;
+            filter->tcpopts.do_fin = 1;
         }
 
         // ECE flag.
         int tcpece;
 
-        if (config_setting_lookup_bool(filter, "tcp_ece", &tcpece))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_ece", &tcpece) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.ece = tcpece;
-            cfg->filters[i].tcpopts.do_ece = 1;
+            filter->tcpopts.ece = tcpece;
+            filter->tcpopts.do_ece = 1;
         }
 
         // CWR flag.
         int tcpcwr;
 
-        if (config_setting_lookup_bool(filter, "tcp_cwr", &tcpcwr))
+        if (config_setting_lookup_bool(filter_cfg, "tcp_cwr", &tcpcwr) == CONFIG_TRUE)
         {
-            cfg->filters[i].tcpopts.cwr = tcpcwr;
-            cfg->filters[i].tcpopts.do_cwr = 1;
+            filter->tcpopts.cwr = tcpcwr;
+            filter->tcpopts.do_cwr = 1;
         }
 
         /* UDP options */
         // Enabled.
         int udpenabled;
 
-        if (config_setting_lookup_bool(filter, "udp_enabled", &udpenabled))
+        if (config_setting_lookup_bool(filter_cfg, "udp_enabled", &udpenabled) == CONFIG_TRUE)
         {
-            cfg->filters[i].udpopts.enabled = udpenabled;
+            filter->udpopts.enabled = udpenabled;
         }
 
         // Source port.
         long long udpsport;
 
-        if (config_setting_lookup_int64(filter, "udp_sport", &udpsport))
+        if (config_setting_lookup_int64(filter_cfg, "udp_sport", &udpsport) == CONFIG_TRUE)
         {
-            cfg->filters[i].udpopts.sport = (u16)udpsport;
-            cfg->filters[i].udpopts.do_sport = 1;
+            filter->udpopts.sport = (u16)udpsport;
+            filter->udpopts.do_sport = 1;
         }
 
         // Destination port.
         long long udpdport;
 
-        if (config_setting_lookup_int64(filter, "udp_dport", &udpdport))
+        if (config_setting_lookup_int64(filter_cfg, "udp_dport", &udpdport) == CONFIG_TRUE)
         {
-            cfg->filters[i].udpopts.dport = (u16)udpdport;
-            cfg->filters[i].udpopts.do_dport = 1;
+            filter->udpopts.dport = (u16)udpdport;
+            filter->udpopts.do_dport = 1;
         }
 
         /* ICMP options */
         // Enabled.
         int icmpenabled;
 
-        if (config_setting_lookup_bool(filter, "icmp_enabled", &icmpenabled))
+        if (config_setting_lookup_bool(filter_cfg, "icmp_enabled", &icmpenabled) == CONFIG_TRUE)
         {
-            cfg->filters[i].icmpopts.enabled = icmpenabled;
+            filter->icmpopts.enabled = icmpenabled;
         }
 
         // ICMP code.
         int icmpcode;
 
-        if (config_setting_lookup_int(filter, "icmp_code", &icmpcode))
+        if (config_setting_lookup_int(filter_cfg, "icmp_code", &icmpcode) == CONFIG_TRUE)
         {
-            cfg->filters[i].icmpopts.code = (u8)icmpcode;
-            cfg->filters[i].icmpopts.do_code = 1;
+            filter->icmpopts.code = (u8)icmpcode;
+            filter->icmpopts.do_code = 1;
         }
 
         // ICMP type.
         int icmptype;
 
-        if (config_setting_lookup_int(filter, "icmp_type", &icmptype))
+        if (config_setting_lookup_int(filter_cfg, "icmp_type", &icmptype) == CONFIG_TRUE)
         {
-            cfg->filters[i].icmpopts.type = (u8)icmptype;
-            cfg->filters[i].icmpopts.do_type = 1;
+            filter->icmpopts.type = (u8)icmptype;
+            filter->icmpopts.do_type = 1;
         }
 
         // Assign ID and increase filter count.
-        cfg->filters[i].id = ++filters;
+        filter->id = ++filters;
     }
 
     config_destroy(&conf);
@@ -546,14 +651,32 @@ int ReadCfg(config__t *cfg)
  */
 void PrintConfig(config__t* cfg)
 {
-    fprintf(stdout, "Printing config...\n");
-    fprintf(stdout, "\tGeneral Settings\n");
-    fprintf(stdout, "\t\tInterface Name => %s\n", cfg->interface);
-    fprintf(stdout, "\t\tUpdate Time => %d\n", cfg->updatetime);
-    fprintf(stdout, "\t\tStdout Update Time => %d\n", cfg->stdout_update_time);
-    fprintf(stdout, "\t\tNo Stats => %d\n\n", cfg->nostats);
+    char* interface = "N/A";
 
-    fprintf(stdout, "\tFilters\n");
+    if (cfg->interface != NULL)
+    {
+        interface = cfg->interface;
+    }
+
+    char* log_file = "N/A";
+
+    if (cfg->log_file != NULL)
+    {
+        log_file = cfg->log_file;
+    }
+
+    printf("Printing config...\n");
+    printf("\tGeneral Settings\n");
+    
+    printf("\t\tVerbose => %d\n", cfg->verbose);
+    printf("\t\tLog File => %s\n", log_file);
+    printf("\t\tInterface Name => %s\n", interface);
+    printf("\t\tUpdate Time => %d\n", cfg->update_time);
+    printf("\t\tNo Stats => %d\n", cfg->no_stats);
+    printf("\t\tStats Per Second => %d\n", cfg->stats_per_second);
+    printf("\t\tStdout Update Time => %d\n\n", cfg->stdout_update_time);
+
+    printf("\tFilters\n");
 
     for (int i = 0; i < MAX_FILTERS; i++)
     {
@@ -564,26 +687,27 @@ void PrintConfig(config__t* cfg)
             break;
         }
 
-        fprintf(stdout, "\t\tFilter #%d:\n", (i + 1));
+        printf("\t\tFilter #%d:\n", (i + 1));
 
         // Main.
-        fprintf(stdout, "\t\t\tID => %d\n", filter->id);
-        fprintf(stdout, "\t\t\tEnabled => %d\n", filter->enabled);
-        fprintf(stdout, "\t\t\tAction => %d (0 = Block, 1 = Allow).\n\n", filter->action);
+        printf("\t\t\tID => %d\n", filter->id);
+        printf("\t\t\tLog => %d\n", filter->log);
+        printf("\t\t\tEnabled => %d\n", filter->enabled);
+        printf("\t\t\tAction => %d (0 = Block, 1 = Allow).\n\n", filter->action);
 
         // IP Options.
-        fprintf(stdout, "\t\t\tIP Options\n");
+        printf("\t\t\tIP Options\n");
 
         // IP addresses require additional code for string printing.
         struct sockaddr_in sin;
         sin.sin_addr.s_addr = filter->src_ip;
-        fprintf(stdout, "\t\t\t\tSource IPv4 => %s\n", inet_ntoa(sin.sin_addr));
-        fprintf(stdout, "\t\t\t\tSource CIDR => %d\n", filter->src_cidr);
+        printf("\t\t\t\tSource IPv4 => %s\n", inet_ntoa(sin.sin_addr));
+        printf("\t\t\t\tSource CIDR => %d\n", filter->src_cidr);
 
         struct sockaddr_in din;
         din.sin_addr.s_addr = filter->dst_ip;
-        fprintf(stdout, "\t\t\t\tDestination IPv4 => %s\n", inet_ntoa(din.sin_addr));
-        fprintf(stdout, "\t\t\t\tDestination CIDR => %d\n", filter->dst_cidr);
+        printf("\t\t\t\tDestination IPv4 => %s\n", inet_ntoa(din.sin_addr));
+        printf("\t\t\t\tDestination CIDR => %d\n", filter->dst_cidr);
 
         struct in6_addr sin6;
         memcpy(&sin6, &filter->src_ip6, sizeof(sin6));
@@ -591,7 +715,7 @@ void PrintConfig(config__t* cfg)
         char srcipv6[INET6_ADDRSTRLEN];
         inet_ntop(AF_INET6, &sin6, srcipv6, sizeof(srcipv6));
 
-        fprintf(stdout, "\t\t\t\tSource IPv6 => %s\n", srcipv6);
+        printf("\t\t\t\tSource IPv6 => %s\n", srcipv6);
 
         struct in6_addr din6;
         memcpy(&din6, &filter->dst_ip6, sizeof(din6));
@@ -599,44 +723,44 @@ void PrintConfig(config__t* cfg)
         char dstipv6[INET6_ADDRSTRLEN];
         inet_ntop(AF_INET6, &din6, dstipv6, sizeof(dstipv6));
 
-        fprintf(stdout, "\t\t\t\tDestination IPv6 => %s\n", dstipv6);
+        printf("\t\t\t\tDestination IPv6 => %s\n", dstipv6);
 
         // Other IP header information.
-        fprintf(stdout, "\t\t\t\tMax Length => %d\n", filter->max_len);
-        fprintf(stdout, "\t\t\t\tMin Length => %d\n", filter->min_len);
-        fprintf(stdout, "\t\t\t\tMax TTL => %d\n", filter->max_ttl);
-        fprintf(stdout, "\t\t\t\tMin TTL => %d\n", filter->min_ttl);
-        fprintf(stdout, "\t\t\t\tTOS => %d\n", filter->tos);
-        fprintf(stdout, "\t\t\t\tPPS => %llu\n", filter->pps);
-        fprintf(stdout, "\t\t\t\tBPS => %llu\n", filter->bps);
-        fprintf(stdout, "\t\t\t\tBlock Time => %llu\n\n", filter->blocktime);
+        printf("\t\t\t\tMax Length => %d\n", filter->max_len);
+        printf("\t\t\t\tMin Length => %d\n", filter->min_len);
+        printf("\t\t\t\tMax TTL => %d\n", filter->max_ttl);
+        printf("\t\t\t\tMin TTL => %d\n", filter->min_ttl);
+        printf("\t\t\t\tTOS => %d\n", filter->tos);
+        printf("\t\t\t\tPPS => %llu\n", filter->pps);
+        printf("\t\t\t\tBPS => %llu\n", filter->bps);
+        printf("\t\t\t\tBlock Time => %llu\n\n", filter->blocktime);
 
         // TCP Options.
-        fprintf(stdout, "\t\t\tTCP Options\n");
-        fprintf(stdout, "\t\t\t\tTCP Enabled => %d\n", filter->tcpopts.enabled);
-        fprintf(stdout, "\t\t\t\tTCP Source Port => %d\n", filter->tcpopts.sport);
-        fprintf(stdout, "\t\t\t\tTCP Destination Port => %d\n", filter->tcpopts.dport);
-        fprintf(stdout, "\t\t\t\tTCP URG Flag => %d\n", filter->tcpopts.urg);
-        fprintf(stdout, "\t\t\t\tTCP ACK Flag => %d\n", filter->tcpopts.ack);
-        fprintf(stdout, "\t\t\t\tTCP RST Flag => %d\n", filter->tcpopts.rst);
-        fprintf(stdout, "\t\t\t\tTCP PSH Flag => %d\n", filter->tcpopts.psh);
-        fprintf(stdout, "\t\t\t\tTCP SYN Flag => %d\n", filter->tcpopts.syn);
-        fprintf(stdout, "\t\t\t\tTCP FIN Flag => %d\n", filter->tcpopts.fin);
-        fprintf(stdout, "\t\t\t\tTCP ECE Flag => %d\n", filter->tcpopts.ece);
-        fprintf(stdout, "\t\t\t\tTCP CWR Flag => %d\n\n", filter->tcpopts.cwr);
+        printf("\t\t\tTCP Options\n");
+        printf("\t\t\t\tTCP Enabled => %d\n", filter->tcpopts.enabled);
+        printf("\t\t\t\tTCP Source Port => %d\n", filter->tcpopts.sport);
+        printf("\t\t\t\tTCP Destination Port => %d\n", filter->tcpopts.dport);
+        printf("\t\t\t\tTCP URG Flag => %d\n", filter->tcpopts.urg);
+        printf("\t\t\t\tTCP ACK Flag => %d\n", filter->tcpopts.ack);
+        printf("\t\t\t\tTCP RST Flag => %d\n", filter->tcpopts.rst);
+        printf("\t\t\t\tTCP PSH Flag => %d\n", filter->tcpopts.psh);
+        printf("\t\t\t\tTCP SYN Flag => %d\n", filter->tcpopts.syn);
+        printf("\t\t\t\tTCP FIN Flag => %d\n", filter->tcpopts.fin);
+        printf("\t\t\t\tTCP ECE Flag => %d\n", filter->tcpopts.ece);
+        printf("\t\t\t\tTCP CWR Flag => %d\n\n", filter->tcpopts.cwr);
 
         // UDP Options.
-        fprintf(stdout, "\t\t\tUDP Options\n");
-        fprintf(stdout, "\t\t\t\tUDP Enabled => %d\n", filter->udpopts.enabled);
-        fprintf(stdout, "\t\t\t\tUDP Source Port => %d\n", filter->udpopts.sport);
-        fprintf(stdout, "\t\t\t\tUDP Destination Port => %d\n\n", filter->udpopts.dport);
+        printf("\t\t\tUDP Options\n");
+        printf("\t\t\t\tUDP Enabled => %d\n", filter->udpopts.enabled);
+        printf("\t\t\t\tUDP Source Port => %d\n", filter->udpopts.sport);
+        printf("\t\t\t\tUDP Destination Port => %d\n\n", filter->udpopts.dport);
 
         // ICMP Options.
-        fprintf(stdout, "\t\t\tICMP Options\n");
-        fprintf(stdout, "\t\t\t\tICMP Enabled => %d\n", filter->icmpopts.enabled);
-        fprintf(stdout, "\t\t\t\tICMP Code => %d\n", filter->icmpopts.code);
-        fprintf(stdout, "\t\t\t\tICMP Type => %d\n", filter->icmpopts.type);
+        printf("\t\t\tICMP Options\n");
+        printf("\t\t\t\tICMP Enabled => %d\n", filter->icmpopts.enabled);
+        printf("\t\t\t\tICMP Code => %d\n", filter->icmpopts.code);
+        printf("\t\t\t\tICMP Type => %d\n", filter->icmpopts.type);
 
-        fprintf(stdout, "\n\n");
+        printf("\n\n");
     }
 }

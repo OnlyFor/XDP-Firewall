@@ -2,3 +2,5 @@
 xdpfw
 xdpfw.s
 xdpfw.conf
+*.log
+*.asm
