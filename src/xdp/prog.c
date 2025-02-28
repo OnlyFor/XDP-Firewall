@@ -45,7 +45,7 @@ int xdp_prog_main(struct xdp_md *ctx)
     }
 
     u8 action = 0;
-    u64 blocktime = 1;
+    u64 block_time = 1;
 
     // Initialize IP headers.
     struct iphdr *iph = NULL;
@@ -82,7 +82,7 @@ int xdp_prog_main(struct xdp_md *ctx)
 
     // Get stats map.
     u32 key = 0;
-    stats_t*stats = bpf_map_lookup_elem(&stats_map, &key);
+    stats_t*stats = bpf_map_lookup_elem(&map_stats, &key);
 
     u64 now = bpf_ktime_get_ns();
 
@@ -91,11 +91,11 @@ int xdp_prog_main(struct xdp_md *ctx)
 
     if (iph6)
     {
-        blocked = bpf_map_lookup_elem(&ip6_blacklist_map, &src_ip6);
+        blocked = bpf_map_lookup_elem(&map_ip6_blacklist, &src_ip6);
     }
     else if (iph)
     {
-        blocked = bpf_map_lookup_elem(&ip_blacklist_map, &iph->saddr);
+        blocked = bpf_map_lookup_elem(&map_ip_blacklist, &iph->saddr);
     }
     
     if (blocked != NULL && *blocked > 0)
@@ -105,11 +105,11 @@ int xdp_prog_main(struct xdp_md *ctx)
             // Remove element from map.
             if (iph6)
             {
-                bpf_map_delete_elem(&ip6_blacklist_map, &src_ip6);
+                bpf_map_delete_elem(&map_ip6_blacklist, &src_ip6);
             }
             else if (iph)
             {
-                bpf_map_delete_elem(&ip_blacklist_map, &iph->saddr);
+                bpf_map_delete_elem(&map_ip_blacklist, &iph->saddr);
             }
         }
         else
@@ -272,18 +272,12 @@ int xdp_prog_main(struct xdp_md *ctx)
     {
         u32 key = i;
 
-        filter_t *filter = bpf_map_lookup_elem(&filters_map, &key);
+        filter_t *filter = bpf_map_lookup_elem(&map_filters, &key);
 
         // Check if ID is above 0 (if 0, it's an invalid rule).
-        if (!filter || filter->id < 1)
+        if (!filter || !filter->set)
         {
             break;
-        }
-
-        // Check if the rule is enabled.
-        if (!filter->enabled)
-        {
-            continue;
         }
 
         // Do specific IPv6.
@@ -545,7 +539,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         
         // Matched.
         action = filter->action;
-        blocktime = filter->blocktime;
+        block_time = filter->block_time;
 
         goto matched;
     }
@@ -561,17 +555,17 @@ int xdp_prog_main(struct xdp_md *ctx)
     if (action == 0)
     {
         // Before dropping, update the blacklist map.
-        if (blocktime > 0)
+        if (block_time > 0)
         {
-            u64 newTime = now + (blocktime * NANO_TO_SEC);
+            u64 new_time = now + (block_time * NANO_TO_SEC);
             
             if (iph6)
             {
-                bpf_map_update_elem(&ip6_blacklist_map, &src_ip6, &newTime, BPF_ANY);
+                bpf_map_update_elem(&map_ip6_blacklist, &src_ip6, &new_time, BPF_ANY);
             }
             else if (iph)
             {
-                bpf_map_update_elem(&ip_blacklist_map, &iph->saddr, &newTime, BPF_ANY);
+                bpf_map_update_elem(&map_ip_blacklist, &iph->saddr, &new_time, BPF_ANY);
             }
         }
 

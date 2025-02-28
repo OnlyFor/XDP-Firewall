@@ -62,10 +62,8 @@ struct icmp_opts
 
 struct filter
 {
-    u8 id;
-
+    unsigned int set : 1;
     unsigned int log : 1;
-
     unsigned int enabled : 1;
 
     u8 action;
@@ -100,7 +98,7 @@ struct filter
     unsigned int do_bps : 1;
     u64 bps;
 
-    u64 blocktime;
+    u64 block_time;
 
     tcp_opts_t tcpopts;
     udp_opts_t udpopts;

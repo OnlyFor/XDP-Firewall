@@ -15,7 +15,6 @@ LOADER_DIR = $(SRC_DIR)/loader
 XDP_DIR = $(SRC_DIR)/xdp
 
 ETC_DIR = /etc/xdpfw
-LOG_DIR = /var/log/xdpfw
 
 # Additional build directories.
 BUILD_LOADER_DIR = $(BUILD_DIR)/loader
@@ -140,7 +139,6 @@ libxdp_clean:
 
 install:
 	mkdir -p $(ETC_DIR)
-	mkdir -p $(LOG_DIR)
 	
 	cp -n xdpfw.conf.example $(ETC_DIR)/xdpfw.conf
 

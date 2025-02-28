@@ -46,7 +46,7 @@ int LoadConfig(config__t *cfg, char *cfg_file, config_overrides_t* overrides)
 void SetCfgDefaults(config__t *cfg)
 {
     cfg->verbose = 2;
-    cfg->log_file = strdup("/var/log/xdpfw/xdpfw.log");
+    cfg->log_file = strdup("/var/log/xdpfw.log");
     cfg->update_time = 0;
     cfg->interface = NULL;
     cfg->no_stats = 0;
@@ -57,7 +57,7 @@ void SetCfgDefaults(config__t *cfg)
     {
         filter_t* filter = &cfg->filters[i];
 
-        filter->id = 0;
+        filter->set = 0;
         filter->enabled = 1;
 
         filter->log = 0;
@@ -90,7 +90,7 @@ void SetCfgDefaults(config__t *cfg)
         filter->do_bps = 0;
         filter->bps = 0;
 
-        filter->blocktime = 1;
+        filter->block_time = 1;
         
         filter->tcpopts.enabled = 0;
         filter->tcpopts.do_dport = 0;
@@ -305,7 +305,7 @@ int ReadCfg(config__t *cfg, config_overrides_t* overrides)
         }
     }
 
-    // Read filters in filters_map structure.
+    // Read filters in map_filters structure.
     setting = config_lookup(&conf, "filters");
 
     // Check if filters map is valid. If not, not a biggie since they aren't required.
@@ -317,9 +317,6 @@ int ReadCfg(config__t *cfg, config_overrides_t* overrides)
 
         return 1;
     }
-
-    // Set filter count.
-    int filters = 0;
 
     for (int i = 0; i < config_setting_length(setting); i++)
     {
@@ -468,15 +465,15 @@ int ReadCfg(config__t *cfg, config_overrides_t* overrides)
         }
 
         // Block time (default 1).
-        long long blocktime;
+        long long block_time;
 
-        if (config_setting_lookup_int64(filter_cfg, "block_time", &blocktime) == CONFIG_TRUE)
+        if (config_setting_lookup_int64(filter_cfg, "block_time", &block_time) == CONFIG_TRUE)
         {
-            filter->blocktime = blocktime;
+            filter->block_time = block_time;
         }
         else
         {
-            filter->blocktime = 1;
+            filter->block_time = 1;
         }
 
         /* TCP options */
@@ -633,8 +630,8 @@ int ReadCfg(config__t *cfg, config_overrides_t* overrides)
             filter->icmpopts.do_type = 1;
         }
 
-        // Assign ID and increase filter count.
-        filter->id = ++filters;
+        // Make sure filter is set.
+        filter->set = 1;
     }
 
     config_destroy(&conf);
@@ -682,7 +679,7 @@ void PrintConfig(config__t* cfg)
     {
         filter_t *filter = &cfg->filters[i];
 
-        if (filter->id < 1)
+        if (!filter->set)
         {
             break;
         }
@@ -690,10 +687,9 @@ void PrintConfig(config__t* cfg)
         printf("\t\tFilter #%d:\n", (i + 1));
 
         // Main.
-        printf("\t\t\tID => %d\n", filter->id);
-        printf("\t\t\tLog => %d\n", filter->log);
         printf("\t\t\tEnabled => %d\n", filter->enabled);
-        printf("\t\t\tAction => %d (0 = Block, 1 = Allow).\n\n", filter->action);
+        printf("\t\t\tAction => %d (0 = Block, 1 = Allow).\n", filter->action);
+        printf("\t\t\tLog => %d\n\n", filter->log);
 
         // IP Options.
         printf("\t\t\tIP Options\n");
@@ -733,7 +729,7 @@ void PrintConfig(config__t* cfg)
         printf("\t\t\t\tTOS => %d\n", filter->tos);
         printf("\t\t\t\tPPS => %llu\n", filter->pps);
         printf("\t\t\t\tBPS => %llu\n", filter->bps);
-        printf("\t\t\t\tBlock Time => %llu\n\n", filter->blocktime);
+        printf("\t\t\t\tBlock Time => %llu\n\n", filter->block_time);
 
         // TCP Options.
         printf("\t\t\tTCP Options\n");
