@@ -69,11 +69,13 @@ LOADER_UTILS_STATS_OBJ = stats.o
 LOADER_UTILS_HELPERS_SRC = helpers.c
 LOADER_UTILS_HELPERS_OBJ = helpers.o
 
+CUST_STATIC_OBJS = /usr/local/lib/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a /usr/local/lib/libmimalloc.a
+
 # Loader objects.
 LOADER_OBJS = $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CONFIG_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CMDLINE_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_XDP_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_LOGGING_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_STATS_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_HELPERS_OBJ)
 
 ifeq ($(LIBXDP_STATIC), 1)
-	LOADER_OBJS := $(LIBBPF_OBJS) $(LIBXDP_OBJS) $(LOADER_OBJS) /usr/local/lib/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a /usr/local/lib/libmimalloc.a
+	LOADER_OBJS := $(LIBBPF_OBJS) $(LIBXDP_OBJS) $(LOADER_OBJS) $(CUST_STATIC_OBJS)
 endif
 
 # XDP directories.
@@ -84,7 +86,7 @@ XDP_OBJ = xdp_prog.o
 RULE_OBJS = $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CONFIG_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_XDP_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_LOGGING_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_HELPERS_OBJ)
 
 ifeq ($(LIBXDP_STATIC), 1)
-	RULE_OBJS := $(LIBBPF_OBJS) $(LIBXDP_OBJS) $(RULE_OBJS) /usr/local/lib/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a /usr/local/lib/libmimalloc.a
+	RULE_OBJS := $(LIBBPF_OBJS) $(LIBXDP_OBJS) $(RULE_OBJS) $(CUST_STATIC_OBJS)
 endif
 
 # Rule add.
