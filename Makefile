@@ -125,6 +125,7 @@ FLAGS_LOADER =
 
 ifeq ($(LIBXDP_STATIC), 1)
 	FLAGS += -D__LIBXDP_STATIC__
+	FLAGS_LOADER += -static /usr/local/lib/mimalloc.o
 else
 	FLAGS_LOADER += -lbpf -lxdp -lconfig -lelf -lz
 endif
