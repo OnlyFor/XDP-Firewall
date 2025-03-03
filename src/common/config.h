@@ -24,7 +24,7 @@
 // #define DO_STATS_ON_BLOCK_MAP
 
 // Similar to DO_STATS_ON_BLOCK_MAP, but for IPv4 range drop map.
-#define DO_STATS_ON_IP_RANGE_DROP_MAP
+// #define DO_STATS_ON_IP_RANGE_DROP_MAP
 
 // When this is defined, a check will occur inside the IPv4 and IPv6 filters.
 // For IPv6 packets, if no IPv6 source/destination IP addresses are set, but there is an IPv4 address, it will ignore the filter.
@@ -38,4 +38,4 @@
 
 // Enables filter logging through XDP.
 // If performance is a concern, it is best to disable this feature by commenting out the below line with //.
-#define ENABLE_FILTER_LOGGING
+// #define ENABLE_FILTER_LOGGING
