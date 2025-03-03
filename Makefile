@@ -120,12 +120,12 @@ endif
 
 # Flags.
 FLAGS = -O3 -ffast-math -g
-FLAGS_LOADER = -lconfig -lelf -lz
+FLAGS_LOADER =
 
 ifeq ($(LIBXDP_STATIC), 1)
 	FLAGS += -D__LIBXDP_STATIC__
 else
-	FLAGS_LOADER += -lbpf -lxdp
+	FLAGS_LOADER += -lbpf -lxdp -lconfig -lelf -lz
 endif
 
 # All chains.
