@@ -173,8 +173,10 @@ Here are more details on the layout of the runtime configuration.
 | log | bool | `false` | Whether to log packets that are matched. |
 | action | int | `1` | The value of `0` drops or blocks the packet while `1` allows/passes the packet through. |
 | block_time | int | `1` | The amount of seconds to block the source IP for if matched. |
-| pps | int64 | `NULL` | Matches if this threshold of packets per second is exceeded for a source IP. |
-| bps | int64 | `NULL` | Matches if this threshold of bytes per second is exceeded for a source IP. |
+| ip_pps | int64 | `NULL` | Matches if this threshold of packets per second is exceeded for a source IP. |
+| ip_bps | int64 | `NULL` | Matches if this threshold of bytes per second is exceeded for a source IP. |
+| flow_pps | int64 | `NULL` | Matches if this threshold of packets per second is exceeded for a source flow (IP and port). |
+| flow_bps | int64 | `NULL` | Matches if this threshold of bytes per second is exceeded for a source flow (IP and port). |
 
 #### IP Options
 | Name | Type | Default | Description |
@@ -211,8 +213,8 @@ You may additionally specified UDP header options for a filter rule which start 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
 | udp_enabled | bool | `false` | Whether to enable UDP on this filter rule. |
-| udp_sport | int | `NULL` | The UDP source port to match with single range support (e.g., `"27000-27015"`). |
-| udp_dport | int | `NULL` | The UDP destination port to match with single range support (e.g., `"27000-27015"`). |
+| udp_sport | int \| string | `NULL` | The UDP source port to match with single range support (e.g., `"27000-27015"`). |
+| udp_dport | int \| string | `NULL` | The UDP destination port to match with single range support (e.g., `"27000-27015"`). |
 
 #### ICMP Options
 You may additionally specified UDP header options for a filter rule which start with `icmp_`.
@@ -311,8 +313,10 @@ The following CLI arguments are supported.
 | --min-len | `--min-len 42` | The packet's mimimum length to match with the dynamic filter. |
 | --max-len | `--max-len 96` | The packet's maximum length to match with the dynamic filter. |
 | --tos | `--tos 1` | The IP's Type of Service to match with the dynamic filter. |
-| --pps | `--pps 10000` | The minimum PPS rate to match with the dynamic filter. |
-| --bps | `--bps 126000` | The minimum BPS rate to match with the dynamic filter. |
+| --ip-pps | `--ip-pps 10000` | The minimum PPS rate of a source IP to match with the dynamic filter. |
+| --ip-bps | `--ip-bps 126000` | The minimum BPS rate of a source IP to match with the dynamic filter. |
+| --flow-pps | `--flow-pps 3000` | The minimum PPS rate of a source flow to match with the dynamic filter. |
+| --flow-bps | `--flow-bps 26000` | The minimum BPS rate of a source flow to match with the dynamic filter. |
 | --tcp | `--tcp 1` | Enables or disables TCP matching with the dynamic filter. |
 | --tsport | `--tsport 22` | The TCP source port to match with the dynamic filter. |
 | --tdport | `--tdport 443` | The TCP destination port to match with the dynamic filter. |
@@ -373,13 +377,6 @@ Due to the usage of a [`for` loop](https://github.com/gamemann/XDP-Firewall/blob
 Unfortunately, we can't really eliminate the `for` loop with the current amount of flexibility we allow (especially minimum/maximum TTL, packet lengths, IDs, etc.), unless if we were to create more BPF maps and insert many more entries which would result in a lot more memory consumed and isn't ideal at all. If we were to remove flexibility, the best approach would be to store filtering rules inside a hashed BPF map using the packet's destination IP/port as the entry's key in my opinion (this would then eliminate flexibility related to being able to specify a filtering rule to match against a single destination IP without a port, unless if we implemented multiple BPF map lookups inside the XDP program which would then impact performance). However, there are currently no plans to switch to this format due to the amount of flexibility lost and also not having the time on my side (if somebody else creates a PR to implement this, I'd be willing to have a separate branch with the new functionality for others to use if the current branch isn't working out for their needs).
 
 The firewall is still decent at filtering non-spoofed attacks, especially when a block time is specified so that malicious IPs are filtered at the beginning of the program for some time.
-
-### Rate Limits
-By default, client stats including packets and bytes per second are calculated per *partial* flow (source IP/port and protocol). This is useful if you want to specify connection-specific rate limits inside of your filtering rules using the `pps` and `bps` settings. However, if you want to calculate client stats using only the source IP, you may comment out [this](https://github.com/gamemann/XDP-Firewall/blob/master/src/common/config.h#L12) line.
-
-```C
-//#define USE_FLOW_RL
-```
 
 ### Filter Logging
 This tool uses `bpf_ringbuf_reserve()` and `bpf_ringbuf_submit()` for filter match logging. At this time, there is no rate limit for the amount of log messages that may be sent. Therefore, if you're encountering a spoofed attack that is matching a filter rule with logging enabled, it will cause additional processing and disk load.
