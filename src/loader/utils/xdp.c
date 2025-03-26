@@ -305,6 +305,7 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
         filter.ip.dst_cidr = ip_range.cidr;
     }
 
+#ifdef ENABLE_IPV6
     if (filter_cfg->ip.src_ip6)
     {
         struct in6_addr in;
@@ -322,6 +323,7 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
 
         memcpy(filter.ip.dst_ip6, in.__in6_u.__u6_addr32, 4);
     }
+#endif
 
     if (filter_cfg->ip.min_ttl > -1)
     {
@@ -370,8 +372,8 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
         filter.tcp.do_sport_min = 1;
         filter.tcp.do_sport_max = 1;
 
-        filter.tcp.sport_min = htons(tcp_src_port_range.min);
-        filter.tcp.sport_max = htons(tcp_src_port_range.max);
+        filter.tcp.sport_min = tcp_src_port_range.min;
+        filter.tcp.sport_max = tcp_src_port_range.max;
     }
 
     port_range_t tcp_dst_port_range = parse_port_range(filter_cfg->tcp.dport);
@@ -381,8 +383,8 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
         filter.tcp.do_dport_min = 1;
         filter.tcp.do_dport_max = 1;
 
-        filter.tcp.dport_min = htons(tcp_dst_port_range.min);
-        filter.tcp.dport_max = htons(tcp_dst_port_range.max);
+        filter.tcp.dport_min = tcp_dst_port_range.min;
+        filter.tcp.dport_max = tcp_dst_port_range.max;
     }
 
     if (filter_cfg->tcp.urg > -1)
@@ -453,8 +455,8 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
         filter.udp.do_sport_min = 1;
         filter.udp.do_sport_max = 1;
 
-        filter.udp.sport_min = htons(udp_src_port_range.min);
-        filter.udp.sport_max = htons(udp_src_port_range.max);
+        filter.udp.sport_min = udp_src_port_range.min;
+        filter.udp.sport_max = udp_src_port_range.max;
     }
 
     port_range_t udp_dst_port_range = parse_port_range(filter_cfg->udp.dport);
@@ -464,8 +466,8 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
         filter.udp.do_dport_min = 1;
         filter.udp.do_dport_max = 1;
 
-        filter.udp.dport_min = htons(udp_dst_port_range.min);
-        filter.udp.dport_max = htons(udp_dst_port_range.max);
+        filter.udp.dport_min = udp_dst_port_range.min;
+        filter.udp.dport_max = udp_dst_port_range.max;
     }
 
     if (filter_cfg->icmp.enabled > -1)
