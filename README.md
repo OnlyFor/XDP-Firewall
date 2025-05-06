@@ -188,6 +188,7 @@ Here are more details on the layout of the runtime configuration.
 | dst_ip6 | string | `NULL` | The destination IPv6 address to match (e.g. `fe80::ac21:14ff:fe4b:3a6d`). |
 | min_ttl | int | `NULL` | The minimum TTL (time-to-live) to match. |
 | max_ttl | int | `NULL` | The maximum TTL (time-to-live) to match. |
+| min_len | int | `NULL` | The minimum packet length to match (includes the entire packet including the ethernet header and payload). |
 | max_len | int | `NULL` | The maximum packet length to match (includes the entire packet including the ethernet header and payload). |
 | tos | int | `NULL` | The ToS (type-of-service) to match. |
 
@@ -306,9 +307,9 @@ The following CLI arguments are supported.
 | --log | `--log 1` | Enables or disables logging for the dynamic filter. |
 | --block-time | `--block-time 60` | How long to block the source IP for if the packet is matched and the action is drop in the dynamic filter (0 = no time). | 
 | --sip | `--sip 192.168.1.0/24` | The source IPv4 address/range to match with the dynamic filter. |
-| --dip | `--sip 10.90.0.0/24` | The destination IPv4 address/range to match with the dynamic filter. |
-| --sip6 | `--sip 192.168.1.0/24` | The source IPv6 address to match with the dynamic filter. |
-| --dip6 | `--sip 192.168.1.0/24` | The destination IPv6 address to match with the dynamic filter. |
+| --dip | `--dip 10.90.0.0/24` | The destination IPv4 address/range to match with the dynamic filter. |
+| --sip6 | `--sip6 192.168.1.0/24` | The source IPv6 address to match with the dynamic filter. |
+| --dip6 | `--dip6 192.168.1.0/24` | The destination IPv6 address to match with the dynamic filter. |
 | --min-ttl | `--min-ttl 0` | The IP's minimum TTL to match with the dynamic filter. |
 | --max-ttl | `--max-ttl 6` | The IP's maximum TTL to match with the dynamic filter. |
 | --min-len | `--min-len 42` | The packet's mimimum length to match with the dynamic filter. |
