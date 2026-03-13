@@ -14,6 +14,16 @@ Environment="DBUS_VERBOSE=0"
 Environment="MALLOC_ARENA_MAX=1"
 Environment="MALLOC_TRIM_THRESHOLD_=65536"
 Environment="MALLOC_MMAP_THRESHOLD_=65536"
+# mimalloc
+Environment="MIMALLOC_ALLOW_THP=0"
+Environment="MIMALLOC_ALLOW_LARGE_OS_PAGES=0"
+Environment="MIMALLOC_EAGER_COMMIT=0"
+Environment="MIMALLOC_ARENA_EAGER_COMMIT=0"
+Environment="MIMALLOC_ABANDONED_PAGE_PURGE=1"
+Environment="MIMALLOC_ABANDONED_RECLAIM_ON_FREE=1"
+Environment="MIMALLOC_MAX_SEGMENT_RECLAIM=100"
+# Since each segment is typically around 32MiB
+Environment="MIMALLOC_TARGET_SEGMENTS_PER_THREAD=1"
 
 # need to build first
 # lsof | grep xdpfw | grep libmimalloc
