@@ -9,6 +9,12 @@ Requires=network-online.target
 
 IPAccounting=yes
 
+# reduce memory
+Environment="DBUS_VERBOSE=0"
+Environment="MALLOC_ARENA_MAX=1"
+Environment="MALLOC_TRIM_THRESHOLD_=65536"
+Environment="MALLOC_MMAP_THRESHOLD_=65536"
+
 # need to build first
 # lsof | grep xdpfw | grep libmimalloc
 # Environment='LD_PRELOAD=/usr/local/lib/libmimalloc.so'
