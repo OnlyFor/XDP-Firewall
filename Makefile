@@ -69,7 +69,7 @@ LOADER_UTILS_STATS_OBJ = stats.o
 LOADER_UTILS_HELPERS_SRC = helpers.c
 LOADER_UTILS_HELPERS_OBJ = helpers.o
 
-CUST_STATIC_OBJS = /usr/local/lib/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a /usr/local/lib/libmimalloc.a
+CUST_STATIC_OBJS = /opt/libs/libelf.a /usr/local/lib/libconfig.a /root/zlib/libz.a /usr/local/lib/libmimalloc.a
 
 # Loader objects.
 LOADER_OBJS = $(BUILD_LOADER_DIR)/$(LOADER_UTILS_CONFIG_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_cli_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_XDP_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_LOGGING_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_STATS_OBJ) $(BUILD_LOADER_DIR)/$(LOADER_UTILS_HELPERS_OBJ)
