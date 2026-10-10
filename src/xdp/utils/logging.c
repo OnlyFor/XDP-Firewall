@@ -7,7 +7,7 @@
 #if defined(ENABLE_FILTERS) && defined(ENABLE_FILTER_LOGGING)
 /**
  * Logs a message to the filter ringbuffer map.
- * 
+ *
  * @param iph The IPv4 header.
  * @param iph6 The IPv6 header.
  * @param src_port The source port.
@@ -20,7 +20,7 @@
  * @param flow_bps The current flow BPS rate.
  * @param pkt_len The full packet length.
  * @param filter_id The filter ID that matched.
- * 
+ *
  * @return always 0
  */
 static __always_inline int log_filter_msg(struct iphdr* iph, struct ipv6hdr* iph6, u16 src_port, u16 dst_port, u8 protocol, u64 now, u64 ip_pps, u64 ip_bps, u64 flow_pps, u64 flow_bps, int pkt_len, int filter_id)
@@ -36,12 +36,25 @@ static __always_inline int log_filter_msg(struct iphdr* iph, struct ipv6hdr* iph
         {
             e->src_ip = iph->saddr;
             e->dst_ip = iph->daddr;
+            // ✓ 清零 8 个赋值（16 字节 IPv6）
+            // 显式清零以防止 ringbuf 内存重用导致的数据泄露
+            e->src_ip6[0] = 0;
+            e->src_ip6[1] = 0;
+            e->src_ip6[2] = 0;
+            e->src_ip6[3] = 0;
+            e->dst_ip6[0] = 0;
+            e->dst_ip6[1] = 0;
+            e->dst_ip6[2] = 0;
+            e->dst_ip6[3] = 0;
         }
 #ifdef ENABLE_IPV6
         else if (iph6)
         {
             memcpy(&e->src_ip6, iph6->saddr.in6_u.u6_addr32, 4);
             memcpy(&e->dst_ip6, iph6->daddr.in6_u.u6_addr32, 4);
+            // 清零 IPv4 字段
+            e->src_ip = 0;
+            e->dst_ip = 0;
         }
 #endif
 
