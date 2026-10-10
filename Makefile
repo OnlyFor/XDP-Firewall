@@ -121,8 +121,8 @@ ifeq ($(LIBXDP_STATIC), 1)
 endif
 
 # Flags.
-FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto
-FLAGS_XDP = -g -O3 -ffast-math
+FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -falign-functions=32 -falign-loops=32 -mprefer-vector-width=256 -ftls-model=local-exec
+FLAGS_XDP = -g0 -O3 -ffast-math -falign-functions=32 -falign-loops=32 -mprefer-vector-width=256 -ftls-model=local-exec
 FLAGS_LOADER =
 
 ifeq ($(LIBXDP_STATIC), 1)
