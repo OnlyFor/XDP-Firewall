@@ -121,12 +121,12 @@ ifeq ($(LIBXDP_STATIC), 1)
 endif
 
 # Flags.
-FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -falign-functions=32 -falign-loops=32 -mprefer-vector-width=256 -ftls-model=local-exec
+FLAGS = -g0 -O3 -ffast-math -march=$(MCPU) -mtune=$(MCPU) -flto -falign-functions=32 -falign-loops=32 -mprefer-vector-width=256
 FLAGS_XDP = -g -O3 -ffast-math -falign-functions=32 -falign-loops=32 -mprefer-vector-width=256
 FLAGS_LOADER =
 
 ifeq ($(LIBXDP_STATIC), 1)
-	FLAGS += -D__LIBXDP_STATIC__
+	FLAGS += -D__LIBXDP_STATIC__ -ftls-model=local-exec
 	FLAGS_LOADER += -static /usr/local/lib/mimalloc.o
 else
 	FLAGS_LOADER += -lbpf -lxdp -lconfig -lelf -lz
