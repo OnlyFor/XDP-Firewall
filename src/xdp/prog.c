@@ -6,9 +6,7 @@
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
 #include <linux/in.h>
-#ifdef ENABLE_ARP_FILTER
 #include <linux/if_arp.h>
-#endif
 #include <stdatomic.h>
 
 #include <common/all.h>
