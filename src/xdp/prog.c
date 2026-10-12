@@ -6,7 +6,6 @@
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
 #include <linux/in.h>
-#include <linux/if_arp.h>
 #include <stdatomic.h>
 
 #include <common/all.h>
@@ -17,6 +16,21 @@
 #include <xdp/utils/helpers.h>
 
 #include <xdp/utils/maps.h>
+
+#ifdef ENABLE_ARP_FILTER
+// 手动定义 ARP 相关内容，避免引入 <linux/if_arp.h> 中依赖 struct sockaddr 的 arpreq 结构体
+// （BPF 编译环境没有 <sys/socket.h>，直接 include 整个头文件会报错）。
+// linux/if_arp.h doesn't compile under -target bpf, define locally.
+#define ARPHRD_ETHER 1
+
+struct arphdr {
+    __be16 ar_hrd;
+    __be16 ar_pro;
+    u8      ar_hln;
+    u8      ar_pln;
+    __be16 ar_op;
+} __attribute__((packed));
+#endif
 
 struct
 {
