@@ -6,6 +6,9 @@
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
 #include <linux/in.h>
+#ifdef ENABLE_ARP_FILTER
+#include <linux/if_arp.h>
+#endif
 #include <stdatomic.h>
 
 #include <common/all.h>
@@ -17,7 +20,7 @@
 
 #include <xdp/utils/maps.h>
 
-struct 
+struct
 {
     __uint(priority, 10);
     __uint(XDP_PASS, 1);
@@ -45,6 +48,42 @@ int xdp_prog_main(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
+#ifdef ENABLE_ARP_FILTER
+    // ARP filter: only allow ARP requests targeting our IP.
+    if (eth->h_proto == htons(ETH_P_ARP))
+    {
+        struct arphdr *arp = data + sizeof(struct ethhdr);
+
+        // Ethernet ARP = arphdr(8) + SHA(6) + SPA(4) + THA(6) + TPA(4) = 28 bytes.
+        if (unlikely((void *)arp + sizeof(struct arphdr) + 2 * ETH_ALEN + 2 * 4 > data_end))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+            return XDP_DROP;
+        }
+
+        // Only filter Ethernet/IPv4 ARP; let other ARP variants fall through.
+        if (arp->ar_hrd == htons(ARPHRD_ETHER) && arp->ar_pro == htons(ETH_P_IP))
+        {
+            // Walk to target IP field: skip arphdr(8) + SHA(6) + SPA(4) + THA(6) = 24 bytes.
+            u8 *ptr = (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN + 4 + ETH_ALEN;
+            u32 ar_tip;
+            __builtin_memcpy(&ar_tip, ptr, 4);
+
+            u32 key = 0;
+            u32 *my_ip = bpf_map_lookup_elem(&map_my_ip, &key);
+
+            // Drop if target IP is not ours (my_ip == 0 means unconfigured, let all pass).
+            if (my_ip && *my_ip != 0 && ar_tip != *my_ip)
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                return XDP_DROP;
+            }
+        }
+    }
+#endif
+
     // Check Ethernet protocol.
 #ifdef ENABLE_IPV6
     if (unlikely(eth->h_proto != htons(ETH_P_IP) && eth->h_proto != htons(ETH_P_IPV6)))
@@ -53,7 +92,7 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
     {
         inc_pkt_stats(stats, STATS_TYPE_PASSED);
-        
+
         return XDP_PASS;
     }
 
@@ -89,7 +128,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         memcpy(&src_ip6, iph6->saddr.in6_u.u6_addr32, sizeof(src_ip6));
     }
 #endif
-    
+
     // We only want to process TCP, UDP, and ICMP protocols.
     if ((iph && iph->protocol != IPPROTO_UDP && iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_ICMP) || (iph6 && iph6->nexthdr != IPPROTO_UDP && iph6->nexthdr != IPPROTO_TCP && iph6->nexthdr != IPPROTO_ICMP))
     {
@@ -114,7 +153,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         blocked = bpf_map_lookup_elem(&map_block6, &src_ip6);
     }
 #endif
-    
+
     if (blocked != NULL)
     {
         if (*blocked > 0 && now > *blocked)
@@ -172,7 +211,7 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
 
     u8 protocol = 0;
-    
+
     if (iph)
     {
         protocol = iph->protocol;
@@ -346,9 +385,9 @@ int xdp_prog_main(struct xdp_md *ctx)
     rule.src_port = src_port;
     rule.dst_port = dst_port;
 #endif
-    
+
     rule.iph = iph;
-    
+
     rule.tcph = tcph;
     rule.udph = udph;
     rule.icmph = icmph;
@@ -376,7 +415,7 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
 
     inc_pkt_stats(stats, STATS_TYPE_PASSED);
-            
+
     return XDP_PASS;
 
 #ifdef ENABLE_FILTERS
@@ -387,7 +426,7 @@ matched:
         if (rule.block_time > 0)
         {
             u64 new_time = now + (rule.block_time * NANO_TO_SEC);
-            
+
             if (iph)
             {
                 bpf_map_update_elem(&map_block, &iph->saddr, &new_time, BPF_ANY);
@@ -397,7 +436,7 @@ matched:
             {
                 bpf_map_update_elem(&map_block6, &src_ip6, &new_time, BPF_ANY);
             }
-#endif      
+#endif
         }
 
         inc_pkt_stats(stats, STATS_TYPE_DROPPED);

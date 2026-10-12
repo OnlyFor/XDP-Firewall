@@ -79,7 +79,7 @@ struct filter_rule_cfg
     s64 flow_bps;
 
     filter_rule_ip_opts_t ip;
-    
+
     filter_rule_filter_tcp_t tcp;
     filter_rule_filter_udp_t udp;
     filter_rule_filter_icmp_t icmp;
@@ -98,9 +98,11 @@ struct config
     int interfaces_cnt;
     char* interfaces[MAX_INTERFACES];
 
+    char* my_ip;                          // ← 新增
+
     int filters_cnt;
     filter_rule_cfg_t filters[MAX_FILTERS];
-    
+
     int drop_ranges_cnt;
     char* drop_ranges[MAX_IP_RANGES];
 } typedef config__t; // config_t is taken by libconfig -.-

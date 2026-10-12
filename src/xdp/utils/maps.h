@@ -5,7 +5,7 @@
 
 #include <xdp/utils/helpers.h>
 
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 1);
@@ -13,7 +13,7 @@ struct
     __type(value, stats_t);
 } map_stats SEC(".maps");
 
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_BLOCK);
@@ -21,8 +21,18 @@ struct
     __type(value, u64);
 } map_block SEC(".maps");
 
+#ifdef ENABLE_ARP_FILTER
+struct
+{
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u32);
+} map_my_ip SEC(".maps");
+#endif
+
 #ifdef ENABLE_IPV6
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_BLOCK);
@@ -44,7 +54,7 @@ struct
 
 #ifdef ENABLE_FILTERS
 #ifdef ENABLE_RL_IP
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_RL_IP);
@@ -53,7 +63,7 @@ struct
 } map_ip_stats SEC(".maps");
 
 #ifdef ENABLE_IPV6
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_RL_IP);
@@ -64,7 +74,7 @@ struct
 #endif
 
 #ifdef ENABLE_RL_FLOW
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_RL_FLOW);
@@ -73,7 +83,7 @@ struct
 } map_flow_stats SEC(".maps");
 
 #ifdef ENABLE_IPV6
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_RL_FLOW);
@@ -83,7 +93,7 @@ struct
 #endif
 #endif
 
-struct 
+struct
 {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, MAX_FILTERS);

@@ -67,3 +67,7 @@
 
 // The action that indicates it should go onto the next program (default XDP_PASS).
 #define XDP_MULTIPROG_ACTION XDP_PASS
+
+// 启用 ARP 过滤（丢弃非发给本机 IP 的 ARP 包）。
+// 如果不需要可以注释掉这一行。
+#define ENABLE_ARP_FILTER

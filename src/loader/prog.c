@@ -23,7 +23,7 @@ int doing_stats = 0;
 
 /**
  * Unpins required BPF maps from file system.
- * 
+ *
  * @param cfg A pointer to the config structure.
  * @param obj A pointer to the BPF object.
  * @param ignore_errors Whether to ignore errors.
@@ -167,7 +167,7 @@ int main(int argc, char *argv[])
     // Raise RLimit.
     struct rlimit rl = { RLIM_INFINITY, RLIM_INFINITY };
 
-    if (setrlimit(RLIMIT_MEMLOCK, &rl)) 
+    if (setrlimit(RLIMIT_MEMLOCK, &rl))
     {
         log_msg(&cfg, 0, 1, "[ERROR] Failed to raise rlimit. Please make sure this program is ran as root!\n");
 
@@ -213,28 +213,28 @@ int main(int argc, char *argv[])
 
         // Get interface index.
         if_idx[i] = if_nametoindex(interface);
-    
+
         if (if_idx[i] < 0)
         {
             log_msg(&cfg, 0, 1, "[WARNING] Failed to retrieve index of network interface '%s'.\n", interface);
-    
+
             continue;
         }
 
         log_msg(&cfg, 3, 0, "Interface index for '%s' => %d.", interface, if_idx[i]);
 
         log_msg(&cfg, 2, 0, "Attaching XDP program to interface '%s'...", interface);
-    
+
         // Attach XDP program.
         char* mode_used = NULL;
-    
+
         if ((ret = attach_xdp(prog, &mode_used, if_idx[i], 0, cli.skb, cli.offload)) != 0)
         {
             log_msg(&cfg, 0, 1, "[WARNING] Failed to attach XDP program to interface '%s' using available modes (%d).\n", interface, ret);
 
             continue;
         }
-    
+
         if (mode_used != NULL)
         {
             log_msg(&cfg, 1, 0, "Attached XDP program to interface '%s' using mode '%s'...", interface, mode_used);
@@ -294,6 +294,10 @@ int main(int argc, char *argv[])
         rb = ring_buffer__new(map_filter_log, hdl_filters_rb_event, &cfg, NULL);
     }
 #endif
+#endif
+
+#ifdef ENABLE_ARP_FILTER
+    int map_my_ip = get_map_fd(prog, "map_my_ip");
 #endif
 
 #ifdef ENABLE_IP_RANGE_DROP
@@ -396,6 +400,15 @@ int main(int argc, char *argv[])
     update_filters(map_filters, &cfg);
 #endif
 
+#ifdef ENABLE_ARP_FILTER
+    if (map_my_ip > -1 && cfg.my_ip)
+    {
+        u32 key = 0;
+        u32 val = inet_addr(cfg.my_ip);
+        bpf_map_update_elem(map_my_ip, &key, &val, BPF_ANY);
+    }
+#endif
+
 #ifdef ENABLE_IP_RANGE_DROP
     if (map_range_drop > -1)
     {
@@ -450,7 +463,7 @@ int main(int argc, char *argv[])
             // Check if config file have been modified
             if (stat(cli.cfg_file, &conf_stat) == 0 && conf_stat.st_mtime > last_config_check) {
                 log_msg(&cfg, 3, 0, "Config file change detected during update. Attempting to reload config...");
-                
+
                 // Reload config.
                 if ((ret = load_cfg(&cfg, cli.cfg_file, 1, &cfg_overrides)) != 0)
                 {
@@ -515,7 +528,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < MAX_INTERFACES; i++)
     {
         const char* interface = cfg.interfaces[i];
-    
+
         if (!interface)
         {
             continue;

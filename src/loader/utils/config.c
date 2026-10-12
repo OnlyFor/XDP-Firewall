@@ -2,12 +2,12 @@
 
 /**
  * Loads the config from the file system.
- * 
+ *
  * @param cfg A pointer to the config structure.
  * @param cfg_file The path to the config file.
  * @param load_defaults Whether to load defaults or not.
  * @param overrides Overrides to use instead of config values.
- * 
+ *
  * @return 0 on success or 1 on error.
  */
 int load_cfg(config__t *cfg, const char* cfg_file, int load_defaults, config_overrides_t* overrides)
@@ -18,14 +18,14 @@ int load_cfg(config__t *cfg, const char* cfg_file, int load_defaults, config_ove
     {
         set_cfg_defaults(cfg);
     }
-    
+
     FILE *file = NULL;
-    
+
     // Open config file.
     if ((ret = open_cfg(&file, cfg_file)) != 0 || file == NULL)
     {
         fprintf(stderr, "Error opening config file.\n");
-        
+
         return ret;
     }
 
@@ -65,9 +65,9 @@ int load_cfg(config__t *cfg, const char* cfg_file, int load_defaults, config_ove
 
 /**
  * Opens the config file.
- * 
+ *
  * @param file_name Path to config file.
- * 
+ *
  * @return 0 on success or 1 on error.
  */
 int open_cfg(FILE** file, const char *file_name)
@@ -92,9 +92,9 @@ int open_cfg(FILE** file, const char *file_name)
 
 /**
  * Close config file.
- * 
+ *
  * @param file A pointer to the file to close.
- * 
+ *
  * @param return 0 on success or error value of fclose().
  */
 int close_cfg(FILE* file)
@@ -104,7 +104,7 @@ int close_cfg(FILE* file)
 
 /**
  * Reads contents from the config file.
- * 
+ *
  * @param file The file pointer.
  * @param buffer The buffer to store the data in (manually allocated).
  */
@@ -134,11 +134,11 @@ int read_cfg(FILE* file, char** buffer)
 
 /**
  * Read the config file and stores values in config structure.
- * 
+ *
  * @param cfg A pointer to the config structure.
  * @param data The config data.
  * @param overrides Overrides to use instead of config values.
- * 
+ *
  * @return 0 on success or 1/-1 on error.
  */
 int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
@@ -189,7 +189,7 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
             if (strlen(overrides->log_file) > 0)
             {
                 cfg->log_file = strdup(overrides->log_file);
-                
+
             }
             else
             {
@@ -358,6 +358,19 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
         {
             cfg->stdout_update_time = stdout_update_time;
         }
+    }
+
+    const char *my_ip_str = NULL;
+
+    if (config_lookup_string(&conf, "my_ip", &my_ip_str) == CONFIG_TRUE)
+    {
+        if (cfg->my_ip)
+        {
+            free(cfg->my_ip);
+            cfg->my_ip = NULL;
+        }
+
+        cfg->my_ip = strdup(my_ip_str);
     }
 
     // Read filters.
@@ -600,7 +613,7 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
             {
                 filter->tcp.ack = tcp_ack;
             }
-            
+
             // RST flag.
             int tcp_rst;
 
@@ -712,7 +725,7 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
                     filter->udp.dport = strdup(val_str);
                 }
             }
-            
+
             /* ICMP options */
 
             // Enabled.
@@ -776,10 +789,10 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
 /**
  * Saves config to file system.
- * 
+ *
  * @param cfg A pointer to the config.
  * @param file_path The file path to store the config into.
- * 
+ *
  * @param return 0 on success or 1 on failure.
  */
 int save_cfg(config__t* cfg, const char* file_path)
@@ -1156,9 +1169,9 @@ int save_cfg(config__t* cfg, const char* file_path)
 
 /**
  * Sets the default values for a filter.
- * 
+ *
  * @param filter A pointer to the filter.
- * 
+ *
  * @return void
  */
 void set_filter_defaults(filter_rule_cfg_t* filter)
@@ -1238,7 +1251,7 @@ void set_filter_defaults(filter_rule_cfg_t* filter)
     filter->tcp.cwr = -1;
 
     filter->udp.enabled = -1;
-    
+
     if (filter->udp.sport)
     {
         free(filter->udp.sport);
@@ -1260,9 +1273,9 @@ void set_filter_defaults(filter_rule_cfg_t* filter)
 
 /**
  * Sets the config structure's default values.
- * 
+ *
  * @param cfg A pointer to the config structure.
- * 
+ *
  * @return void
  */
 void set_cfg_defaults(config__t* cfg)
@@ -1273,6 +1286,8 @@ void set_cfg_defaults(config__t* cfg)
     cfg->no_stats = 0;
     cfg->stats_per_second = 0;
     cfg->stdout_update_time = 1000;
+
+    cfg->my_ip = NULL;
 
     if (cfg->log_file)
     {
@@ -1327,10 +1342,10 @@ void set_cfg_defaults(config__t* cfg)
 
 /**
  * Prints a filter rule.
- * 
+ *
  * @param filter A pointer to the filter rule.
  * @param idx The current index.
- * 
+ *
  * @return void
  */
 void print_filter(filter_rule_cfg_t* filter, int idx)
@@ -1452,9 +1467,9 @@ void print_filter(filter_rule_cfg_t* filter, int idx)
 
 /**
  * Prints config settings.
- * 
+ *
  * @param cfg A pointer to the config structure.
- * 
+ *
  * @return void
  */
 void print_cfg(config__t* cfg)
@@ -1477,13 +1492,13 @@ void print_cfg(config__t* cfg)
     printf("\tStdout Update Time => %d\n\n", cfg->stdout_update_time);
 
     printf("Interfaces\n");
-    
+
     if (cfg->interfaces_cnt > 0)
     {
         for (int i = 0; i < cfg->interfaces_cnt; i++)
         {
             const char* interface = cfg->interfaces[i];
-    
+
             if (!interface)
             {
                 continue;
@@ -1506,14 +1521,14 @@ void print_cfg(config__t* cfg)
         for (int i = 0; i < cfg->filters_cnt; i++)
         {
             filter_rule_cfg_t *filter = &cfg->filters[i];
-    
+
             if (!filter->set)
             {
                 break;
             }
-    
+
             print_filter(filter, i + 1);
-    
+
             printf("\n\n");
         }
 
@@ -1523,7 +1538,7 @@ void print_cfg(config__t* cfg)
     {
         printf("\t- None\n\n");
     }
-    
+
     printf("IP Drop Ranges\n");
 
     if (cfg->drop_ranges_cnt > 0)
@@ -1531,7 +1546,7 @@ void print_cfg(config__t* cfg)
         for (int i = 0; i < cfg->drop_ranges_cnt; i++)
         {
             const char* range = cfg->drop_ranges[i];
-    
+
             if (!range)
             {
                 continue;
@@ -1548,9 +1563,9 @@ void print_cfg(config__t* cfg)
 
 /**
  * Retrieves next available filter index.
- * 
+ *
  * @param cfg A pointer to the config structure.
- * 
+ *
  * @return The next available index or -1 if there are no available indexes.
  */
 int get_next_filter_idx(config__t* cfg)
@@ -1572,9 +1587,9 @@ int get_next_filter_idx(config__t* cfg)
 
 /**
  * Retrieves the next available IP drop range index.
- * 
+ *
  * @param cfg A pointer to the config structure.
- * 
+ *
  * @return The next available index or -1 if there are no available indexes.
  */
 int get_next_ip_drop_range_idx(config__t* cfg)
