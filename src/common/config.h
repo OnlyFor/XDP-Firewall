@@ -71,3 +71,5 @@
 // 启用 ARP 过滤（丢弃非发给本机 IP 的 ARP 包）。
 // 如果不需要可以注释掉这一行。
 #define ENABLE_ARP_FILTER
+// 最多可以定义的 IP 数
+#define MAX_MY_IPS 32

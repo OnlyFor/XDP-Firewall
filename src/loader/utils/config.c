@@ -360,17 +360,30 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
         }
     }
 
-    const char *my_ip_str = NULL;
+//     const char *my_ip_str = NULL;
+//     if (config_lookup_string(&conf, "my_ip", &my_ip_str) == CONFIG_TRUE)
+//     {
+//         if (cfg->my_ip)
+//         {
+//             free(cfg->my_ip);
+//             cfg->my_ip = NULL;
+//         }
+//         cfg->my_ip = strdup(my_ip_str);
+//     }
+    setting = config_lookup(&conf, "my_ips");
 
-    if (config_lookup_string(&conf, "my_ip", &my_ip_str) == CONFIG_TRUE)
+    if (setting && config_setting_is_list(setting))
     {
-        if (cfg->my_ip)
+        for (int i = 0; i < config_setting_length(setting) && i < MAX_MY_IPS; i++)
         {
-            free(cfg->my_ip);
-            cfg->my_ip = NULL;
-        }
+            const char* ip_str = config_setting_get_string_elem(setting, i);
 
-        cfg->my_ip = strdup(my_ip_str);
+            if (ip_str)
+            {
+                cfg->my_ips[i] = strdup(ip_str);
+                cfg->my_ips_cnt++;
+            }
+        }
     }
 
     // Read filters.
@@ -1287,7 +1300,17 @@ void set_cfg_defaults(config__t* cfg)
     cfg->stats_per_second = 0;
     cfg->stdout_update_time = 1000;
 
-    cfg->my_ip = NULL;
+    // cfg->my_ip = NULL;
+    cfg->my_ips_cnt = 0;
+
+    for (int i = 0; i < MAX_MY_IPS; i++)
+    {
+        if (cfg->my_ips[i])
+        {
+            free(cfg->my_ips[i]);
+            cfg->my_ips[i] = NULL;
+        }
+    }
 
     if (cfg->log_file)
     {

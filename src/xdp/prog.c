@@ -74,19 +74,26 @@ int xdp_prog_main(struct xdp_md *ctx)
             return XDP_DROP;
         }
 
+        // Check if ARP filter is enabled (my_ips_cnt > 0).
+        u32 zero = 0;
+        u32 *arp_enabled = bpf_map_lookup_elem(&map_arp_enabled, &zero);
+
         // Only filter Ethernet/IPv4 ARP; let other ARP variants fall through.
-        if (arp->ar_hrd == htons(ARPHRD_ETHER) && arp->ar_pro == htons(ETH_P_IP))
+        // if (arp->ar_hrd == htons(ARPHRD_ETHER) && arp->ar_pro == htons(ETH_P_IP))
+        if (arp_enabled && *arp_enabled &&
+            arp->ar_hrd == htons(ARPHRD_ETHER) && arp->ar_pro == htons(ETH_P_IP))
         {
             // Walk to target IP field: skip arphdr(8) + SHA(6) + SPA(4) + THA(6) = 24 bytes.
             u8 *ptr = (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN + 4 + ETH_ALEN;
             u32 ar_tip;
             __builtin_memcpy(&ar_tip, ptr, 4);
 
-            u32 key = 0;
-            u32 *my_ip = bpf_map_lookup_elem(&map_my_ip, &key);
-
-            // Drop if target IP is not ours (my_ip == 0 means unconfigured, let all pass).
-            if (my_ip && *my_ip != 0 && ar_tip != *my_ip)
+            // u32 key = 0;
+            // u32 *my_ip = bpf_map_lookup_elem(&map_my_ip, &key);
+            // // Drop if target IP is not ours (my_ip == 0 means unconfigured, let all pass).
+            // if (my_ip && *my_ip != 0 && ar_tip != *my_ip)
+            u8 *found = bpf_map_lookup_elem(&map_my_ip, &ar_tip);
+            if (!found)
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
 

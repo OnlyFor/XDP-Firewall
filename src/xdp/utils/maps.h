@@ -28,6 +28,14 @@ struct
     __uint(max_entries, 1);
     __type(key, u32);
     __type(value, u32);
+} map_arp_enabled SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_MY_IPS);
+    __type(key, u32);
+    __type(value, u32);
 } map_my_ip SEC(".maps");
 #endif
 

@@ -401,12 +401,26 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef ENABLE_ARP_FILTER
-    if (map_my_ip > -1 && cfg.my_ip)
+//     if (map_my_ip > -1 && cfg.my_ip)
+//     {
+//         u32 key = 0;
+//         u32 val = inet_addr(cfg.my_ip);
+//         bpf_map_update_elem(map_my_ip, &key, &val, BPF_ANY);
+//     }
+    int written = 0;
+    for (int i = 0; i < cfg.my_ips_cnt; i++)
     {
-        u32 key = 0;
-        u32 val = inet_addr(cfg.my_ip);
-        bpf_map_update_elem(map_my_ip, &key, &val, BPF_ANY);
+        u32 ip = inet_addr(cfg.my_ips[i]);
+        if (ip == INADDR_NONE) continue;
+        u8 val = 1;
+        if (bpf_map_update_elem(map_my_ip, &ip, &val, BPF_ANY) == 0)
+        {
+            written++;
+        }
     }
+    u32 zero = 0;
+    u32 enabled = (written > 0) ? 1 : 0;
+    bpf_map_update_elem(map_arp_enabled, &zero, &enabled, BPF_ANY);
 #endif
 
 #ifdef ENABLE_IP_RANGE_DROP
