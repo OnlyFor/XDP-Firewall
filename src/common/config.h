@@ -79,3 +79,6 @@
 #define ENABLE_NDP_FILTER
 // 最多可以定义的 IP6 数
 #define MAX_MY_IP6S 32
+
+// 过滤常见的 VPS UDP 垃圾流量
+#define ENABLE_UDP_JUNK_FILTER

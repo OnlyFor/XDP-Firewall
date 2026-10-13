@@ -212,6 +212,68 @@ int xdp_prog_main(struct xdp_md *ctx)
     }
 #endif
 
+#ifdef ENABLE_UDP_JUNK_FILTER
+    // Drop UDP junk: multicast/broadcast destinations or known junk ports.
+    // Self-contained — does not depend on udph from ENABLE_FILTERS block.
+    if ((iph && iph->protocol == IPPROTO_UDP) ||
+        (iph6 && iph6->nexthdr == IPPROTO_UDP))
+    {
+        struct udphdr *udph_j = iph
+            ? (void *)iph + (iph->ihl * 4)
+            : (void *)iph6 + sizeof(struct ipv6hdr);
+
+        if (likely((void *)udph_j + sizeof(struct udphdr) <= data_end))
+        {
+            int junk_dst = 0;
+
+            if (iph)
+            {
+                // 224.0.0.0/4 multicast: MSB byte in [0xE0, 0xEF].
+                // 255.255.255.255 limited broadcast: all-ones (same in any byte order).
+                u8 msb = *((u8 *)&iph->daddr);
+                junk_dst = (msb >= 0xE0 && msb <= 0xEF) || (iph->daddr == 0xFFFFFFFF);
+            }
+            else
+            {
+                // IPv6 multicast = ff00::/8.
+                junk_dst = (iph6->daddr.in6_u.u6_addr8[0] == 0xff);
+            }
+
+            // Multicast/broadcast short-circuits first; only non-multicast
+            // packets reach the port checks.
+            u16 dport = ntohs(udph_j->dest);
+
+            if (junk_dst ||
+                dport == 5353  ||                   // mDNS
+                dport == 1900  ||                   // UPnP/SSDP
+                dport == 5355  ||                   // LLMNR
+                dport == 5060  ||                   // SIP
+                dport == 161   ||                   // SNMP
+                dport == 389   ||                   // CLDAP（苹果，公网反射放大）
+                dport == 17    ||                   // QOTD（经典反射源，~100x 放大）
+                dport == 5683  ||                   // CoAP/LwM2M（IoT 反射重灾区）
+                dport == 69    ||                   // TFTP
+                dport == 19    ||                   // chargen
+                dport == 111   ||                   // rpcbind/Portmapper
+                (dport >= 137 && dport <= 138) ||   // NetBIOS
+                dport == 67    ||                   // DHCP server
+                dport == 21027 ||                   // Syncthing
+                dport == 1968  ||                   // ?
+                dport == 4466  ||                   // ?
+                // ↓ Uncomment if not running these services:
+                // dport == 123   ||                // NTP
+                // dport == 53    ||                // DNS
+                // dport == 11211 ||                // memcached
+                0)
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                return XDP_DROP;
+            }
+        }
+    }
+#endif
+
 #ifdef ENABLE_NDP_FILTER
     if (iph6 && iph6->nexthdr == IPPROTO_ICMPV6)
     {
