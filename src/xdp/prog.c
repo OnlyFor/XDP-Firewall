@@ -214,33 +214,32 @@ int xdp_prog_main(struct xdp_md *ctx)
 
 #ifdef ENABLE_NDP_FILTER
     // NDP filter: drop NS/NA whose target address is not in our whitelist.
-    if (iph6 && icmp6h && (icmp6h->icmp6_type == 135 || icmp6h->icmp6_type == 136))
+    // Self-contained — does not depend on icmp6h from ENABLE_FILTERS block.
+    if (iph6 && iph6->nexthdr == IPPROTO_ICMPV6)
     {
-        // Check if NDP filter is enabled (my_ip6s_cnt > 0).
-        u32 zero = 0;
-        u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+        struct icmp6hdr *icmp6_hdr = (void *)iph6 + sizeof(struct ipv6hdr);
 
-        if (ndp_enabled && *ndp_enabled)
+        // Check ICMPv6 header (8B) + NDP target address (16B) = 24B total.
+        if (likely((void *)icmp6_hdr + 24 <= data_end) &&
+            (icmp6_hdr->icmp6_type == 135 || icmp6_hdr->icmp6_type == 136))
         {
-            // Target Address starts at icmp6h + 8 (skip 8-byte ICMPv6 header).
-            // u128 *ndp_target = (u128 *)((u8 *)icmp6h + 8);
-            u128 ndp_target;
-            __builtin_memcpy(&ndp_target, (u8 *)icmp6h + 8, 16);
+            u32 zero = 0;
+            u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
 
-            if (unlikely((void *)ndp_target + 16 > data_end))
+            if (ndp_enabled && *ndp_enabled)
             {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                // Copy target address to stack for map lookup (same pattern as ARP ar_tip).
+                u128 ndp_target;
+                __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
 
-                return XDP_DROP;
-            }
+                u8 *found = bpf_map_lookup_elem(&map_my_ip6, &ndp_target);
 
-            u8 *found = bpf_map_lookup_elem(&map_my_ip6, ndp_target);
+                if (!found)
+                {
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
 
-            if (!found)
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-
-                return XDP_DROP;
+                    return XDP_DROP;
+                }
             }
         }
     }
