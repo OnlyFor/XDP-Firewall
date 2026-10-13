@@ -386,6 +386,22 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
         }
     }
 
+    setting = config_lookup(&conf, "my_ip6s");
+
+    if (setting && config_setting_is_list(setting))
+    {
+        for (int i = 0; i < config_setting_length(setting) && i < MAX_MY_IP6S; i++)
+        {
+            const char* ip6_str = config_setting_get_string_elem(setting, i);
+
+            if (ip6_str)
+            {
+                cfg->my_ip6s[i] = strdup(ip6_str);
+                cfg->my_ip6s_cnt++;
+            }
+        }
+    }
+
     // Read filters.
     setting = config_lookup(&conf, "filters");
 
@@ -1309,6 +1325,17 @@ void set_cfg_defaults(config__t* cfg)
         {
             free(cfg->my_ips[i]);
             cfg->my_ips[i] = NULL;
+        }
+    }
+
+    cfg->my_ip6s_cnt = 0;
+
+    for (int i = 0; i < MAX_MY_IP6S; i++)
+    {
+        if (cfg->my_ip6s[i])
+        {
+            free(cfg->my_ip6s[i]);
+            cfg->my_ip6s[i] = NULL;
         }
     }
 

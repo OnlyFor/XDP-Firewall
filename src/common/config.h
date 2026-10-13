@@ -73,3 +73,9 @@
 #define ENABLE_ARP_FILTER
 // 最多可以定义的 IP 数
 #define MAX_MY_IPS 32
+
+// Enables NDP filtering.
+// Drops NDP NS/NA whose target address does not match configured IPv6 addresses.
+#define ENABLE_NDP_FILTER
+// 最多可以定义的 IP6 数
+#define MAX_MY_IP6S 32

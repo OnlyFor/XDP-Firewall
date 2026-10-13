@@ -149,7 +149,7 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
 
     // We only want to process TCP, UDP, and ICMP protocols.
-    if ((iph && iph->protocol != IPPROTO_UDP && iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_ICMP) || (iph6 && iph6->nexthdr != IPPROTO_UDP && iph6->nexthdr != IPPROTO_TCP && iph6->nexthdr != IPPROTO_ICMP))
+    if ((iph && iph->protocol != IPPROTO_UDP && iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_ICMP) || (iph6 && iph6->nexthdr != IPPROTO_UDP && iph6->nexthdr != IPPROTO_TCP && iph6->nexthdr != IPPROTO_ICMPV6))
     {
         inc_pkt_stats(stats, STATS_TYPE_PASSED);
 
@@ -209,6 +209,40 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
 
         return XDP_DROP;
+    }
+#endif
+
+#ifdef ENABLE_NDP_FILTER
+    // NDP filter: drop NS/NA whose target address is not in our whitelist.
+    if (iph6 && icmp6h && (icmp6h->icmp6_type == 135 || icmp6h->icmp6_type == 136))
+    {
+        // Check if NDP filter is enabled (my_ip6s_cnt > 0).
+        u32 zero = 0;
+        u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+
+        if (ndp_enabled && *ndp_enabled)
+        {
+            // Target Address starts at icmp6h + 8 (skip 8-byte ICMPv6 header).
+            // u128 *ndp_target = (u128 *)((u8 *)icmp6h + 8);
+            u128 ndp_target;
+            __builtin_memcpy(&ndp_target, (u8 *)icmp6h + 8, 16);
+
+            if (unlikely((void *)ndp_target + 16 > data_end))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                return XDP_DROP;
+            }
+
+            u8 *found = bpf_map_lookup_elem(&map_my_ip6, ndp_target);
+
+            if (!found)
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                return XDP_DROP;
+            }
+        }
     }
 #endif
 

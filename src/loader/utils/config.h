@@ -102,6 +102,9 @@ struct config
     int my_ips_cnt;                          // ← 新增
     char* my_ips[MAX_MY_IPS];                // ← char* my_ip 改为数组
 
+    int my_ip6s_cnt;
+    char* my_ip6s[MAX_MY_IP6S];
+
     int filters_cnt;
     filter_rule_cfg_t filters[MAX_FILTERS];
 

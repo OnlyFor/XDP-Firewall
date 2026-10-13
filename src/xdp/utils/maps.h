@@ -39,6 +39,24 @@ struct
 } map_my_ip SEC(".maps");
 #endif
 
+#ifdef ENABLE_NDP_FILTER
+struct
+{
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u32);
+} map_ndp_enabled SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_MY_IP6S);
+    __type(key, u128);
+    __type(value, u8);
+} map_my_ip6 SEC(".maps");
+#endif
+
 #ifdef ENABLE_IPV6
 struct
 {
