@@ -213,32 +213,47 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
 
 #ifdef ENABLE_NDP_FILTER
-    // NDP filter: drop NS/NA whose target address is not in our whitelist.
-    // Self-contained — does not depend on icmp6h from ENABLE_FILTERS block.
     if (iph6 && iph6->nexthdr == IPPROTO_ICMPV6)
     {
         struct icmp6hdr *icmp6_hdr = (void *)iph6 + sizeof(struct ipv6hdr);
 
-        // Check ICMPv6 header (8B) + NDP target address (16B) = 24B total.
-        if (likely((void *)icmp6_hdr + 24 <= data_end) &&
-            (icmp6_hdr->icmp6_type == 135 || icmp6_hdr->icmp6_type == 136))
+        // Check ICMPv6 header (8B) — enough to read type.
+        if (likely((void *)icmp6_hdr + sizeof(struct icmp6hdr) <= data_end))
         {
-            u32 zero = 0;
-            u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+            u8 type = icmp6_hdr->icmp6_type;
 
-            if (ndp_enabled && *ndp_enabled)
+            // 133 = RS, 137 = Redirect, 130/131/132 = MLD, 143 = MLDv2,
+            // 138 = Router Renumbering, 139 = Node Information Query.
+            if (type == 133 || type == 137 ||
+                type == 130 || type == 131 || type == 132 ||
+                type == 143 || type == 138 || type == 139)
             {
-                // Copy target address to stack for map lookup (same pattern as ARP ar_tip).
-                u128 ndp_target;
-                __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
 
-                u8 *found = bpf_map_lookup_elem(&map_my_ip6, &ndp_target);
+                return XDP_DROP;
+            }
 
-                if (!found)
+            // NS (135) / NA (136): whitelist by target address.
+            // Need additional 16B for target address beyond the 8B ICMPv6 header.
+            if ((type == 135 || type == 136) &&
+                likely((void *)icmp6_hdr + 24 <= data_end))
+            {
+                u32 zero = 0;
+                u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+
+                if (ndp_enabled && *ndp_enabled)
                 {
-                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    u128 ndp_target;
+                    __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
 
-                    return XDP_DROP;
+                    u8 *found = bpf_map_lookup_elem(&map_my_ip6, &ndp_target);
+
+                    if (!found)
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                        return XDP_DROP;
+                    }
                 }
             }
         }
