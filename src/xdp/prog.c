@@ -260,6 +260,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 dport == 21027 ||                   // Syncthing
                 dport == 1968  ||                   // ?
                 dport == 4466  ||                   // ?
+                dport == 33445 ||                  // Tailscale
                 // ↓ Uncomment if not running these services:
                 // dport == 123   ||                // NTP
                 // dport == 53    ||                // DNS
