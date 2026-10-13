@@ -298,6 +298,7 @@ int main(int argc, char *argv[])
 
 #ifdef ENABLE_ARP_FILTER
     int map_my_ip = get_map_fd(prog, "map_my_ip");
+    int map_arp_enabled = get_map_fd(prog, "map_arp_enabled");
 #endif
 
 #ifdef ENABLE_IP_RANGE_DROP
