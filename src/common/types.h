@@ -196,3 +196,25 @@ struct lpm_trie_key
     u32 prefix_len;
     u32 data;
 } typedef lpm_trie_key_t;
+
+#ifdef ENABLE_ALLOW_CACHE
+struct allow_key4
+{
+    u32 src_ip;
+    u32 dst_ip;
+    u16 src_port;
+    u16 dst_port;
+    u8  protocol;
+} typedef allow_key4_t;
+
+#ifdef ENABLE_IPV6
+struct allow_key6
+{
+    u128 src_ip6;
+    u128 dst_ip6;
+    u16 src_port;
+    u16 dst_port;
+    u8  protocol;
+} typedef allow_key6_t;
+#endif
+#endif

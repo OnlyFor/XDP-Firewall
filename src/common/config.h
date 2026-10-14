@@ -40,7 +40,7 @@
 #define ENABLE_RL_IP
 
 // Enable source flow rate limiting.
-// #define ENABLE_RL_FLOW
+#define ENABLE_RL_FLOW
 
 // Maximum entries in source IP rate limit map.
 #define MAX_RL_IP 100000
@@ -85,3 +85,19 @@
 
 // 新增 allow 缓存提升性能
 #define ENABLE_ALLOW_CACHE
+
+#ifdef ENABLE_ALLOW_CACHE
+#ifndef ENABLE_FILTERS
+#error "ENABLE_ALLOW_CACHE requires ENABLE_FILTERS (needs L4 header parsing: tcph/udph/src_port)"
+#endif
+#ifndef ENABLE_RL_FLOW
+#error "ENABLE_ALLOW_CACHE requires ENABLE_RL_FLOW (needs rate guard: flow_pps/flow_bps)"
+#endif
+#ifndef ENABLE_RL_IP
+#error "ENABLE_ALLOW_CACHE requires ENABLE_RL_IP (needs IP-level rate guard: ip_pps/ip_bps)"
+#endif
+#define ALLOW_CACHE_MAX_FLOW_PPS 50000       // 单流 PPS 阈值，阈值，0 = 不检查
+#define ALLOW_CACHE_MAX_FLOW_BPS 420000000   // 单流 BPS 阈值
+#define ALLOW_CACHE_MAX_IP_PPS   80000       // 单 IP 总 PPS 阈值
+#define ALLOW_CACHE_MAX_IP_BPS   500000000   // 单 IP 总 BPS 阈值（~500Mbps）
+#endif
