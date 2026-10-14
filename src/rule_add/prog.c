@@ -28,6 +28,7 @@ int main(int argc, char *argv[])
 
     cli.action = -1;
     cli.block_time = -1;
+    cli.allow_time = 0;
 
     cli.ip_pps = -1;
     cli.ip_bps = -1;
@@ -81,6 +82,7 @@ int main(int argc, char *argv[])
         printf("  --action          The action when a packet matches (0 = drop, 1 = allow).\n");
         printf("  --log             Enables or disables logging for this filter.\n");
         printf("  --block-time      How long to add the source IP to the block list for if matched and the action is drop (0 = no time).\n\n");
+        printf("  --allow-time      How long to cache the source IP in allow list if matched and the action is allow (0 = no cache).\n\n");
 
         printf("  --sip             The source IPv4 address (with CIDR support).\n");
         printf("  --dip             The destination IPv4 address (with CIDR support).\n");
@@ -96,7 +98,7 @@ int main(int argc, char *argv[])
         printf("  --ip-bps          The minimum IP-level byte rate (per second) to match.\n");
         printf("  --flow-pps        The minimum flow-level packet rate (per second) to match.\n");
         printf("  --flow-bps        The minimum flow-level byte rate (per second) to match.\n\n");
-        
+
         printf("  --tcp             Enable or disables matching on the TCP protocol.\n");
         printf("  --tsport          The TCP source port to match on.\n");
         printf("  --tdport          The TCP destination port to match on.\n");
@@ -130,7 +132,7 @@ int main(int argc, char *argv[])
 
     // Load config.
     config__t cfg = {0};
-    
+
     if (cli.save || cli.mode == 0)
     {
         if ((ret = load_cfg(&cfg, cli.cfg_file, 1, NULL)) != 0)
@@ -204,6 +206,11 @@ int main(int argc, char *argv[])
         if (cli.block_time > -1)
         {
             new_filter.block_time = cli.block_time;
+        }
+
+        if (cli.allow_time > 0)
+        {
+            new_filter.allow_time = cli.allow_time;
         }
 
         if (cli.src_ip)

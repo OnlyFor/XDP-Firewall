@@ -30,6 +30,8 @@ struct cli
     int action;
     int block_time;
 
+    int allow_time;
+
     char* src_ip;
     char* dst_ip;
 

@@ -82,3 +82,6 @@
 
 // 过滤常见的 VPS UDP 垃圾流量
 #define ENABLE_UDP_JUNK_FILTER
+
+// 新增 allow 缓存提升性能
+#define ENABLE_ALLOW_CACHE

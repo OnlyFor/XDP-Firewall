@@ -3,10 +3,10 @@
 #ifdef ENABLE_FILTERS
 /**
  * Processes a filter rule.
- * 
+ *
  * @param idx The rule index.
  * @param data A pointer to the rule context.
- * 
+ *
  * @return 1 to break the loop or 0 to continue.
  */
 static __always_inline long process_rule(u32 idx, void* data)
@@ -82,7 +82,7 @@ static __always_inline long process_rule(u32 idx, void* data)
             {
                 return 0;
             }
-            
+
             if (!is_ip_in_range(ctx->iph->daddr, filter->ip.dst_ip, filter->ip.dst_cidr))
             {
                 return 0;
@@ -272,7 +272,7 @@ static __always_inline long process_rule(u32 idx, void* data)
             if (filter->icmp.do_type && filter->icmp.type != ctx->icmph->type)
             {
                 return 0;
-            }  
+            }
         }
 #ifdef ENABLE_IPV6
         else if (ctx->icmph6)
@@ -302,11 +302,15 @@ static __always_inline long process_rule(u32 idx, void* data)
         log_filter_msg(ctx->iph, ctx->iph6, ctx->src_port, ctx->dst_port, ctx->protocol, ctx->now, ctx->ip_pps, ctx->ip_bps, ctx->flow_pps, ctx->flow_bps, ctx->pkt_len, idx);
     }
 #endif
-    
+
     // Matched.
     ctx->matched = 1;
     ctx->action = filter->action;
     ctx->block_time = filter->block_time;
+
+#ifdef ENABLE_ALLOW_CACHE
+    ctx->allow_time = filter->allow_time;
+#endif
 
     return 1;
 }

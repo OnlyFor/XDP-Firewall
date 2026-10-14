@@ -8,7 +8,7 @@ const struct option opts[] =
     { "save", no_argument, NULL, 's' },
 
     { "mode", required_argument, NULL, 'm' },
-    
+
     { "idx", required_argument, NULL, 'i' },
 
     { "ip", required_argument, NULL, 'd' },
@@ -19,6 +19,7 @@ const struct option opts[] =
     { "action", required_argument, NULL, 29 },
     { "log", required_argument, NULL, 30 },
     { "block-time", required_argument, NULL, 31 },
+    { "allow-time", required_argument, NULL, 99 },       // ← 新增，99 避免冲突
 
     { "sip", required_argument, NULL, 0 },
     { "dip", required_argument, NULL, 1 },
@@ -51,7 +52,7 @@ const struct option opts[] =
     { "udp", required_argument, NULL, 22 },
     { "usport", required_argument, NULL, 23 },
     { "udport", required_argument, NULL, 24 },
-    
+
     { "icmp", required_argument, NULL, 25 },
     { "code", required_argument, NULL, 26 },
     { "type", required_argument, NULL, 27 },
@@ -127,6 +128,11 @@ void parse_cli(cli_t* cli, int argc, char* argv[])
 
                 break;
 
+            case 99:
+                cli->allow_time = atoi(optarg);
+
+                break;
+
             case 0:
                 cli->src_ip = optarg;
 
@@ -139,7 +145,7 @@ void parse_cli(cli_t* cli, int argc, char* argv[])
 
             case 2:
                 cli->src_ip6 = optarg;
-                
+
                 break;
 
             case 3:
@@ -276,7 +282,7 @@ void parse_cli(cli_t* cli, int argc, char* argv[])
                 cli->icmp_type = atoi(optarg);
 
                 break;
-            
+
             case '?':
                 fprintf(stderr, "Missing argument option...\n");
 

@@ -19,6 +19,10 @@ struct rule_ctx
     int action;
     u64 block_time;
 
+#ifdef ENABLE_ALLOW_CACHE
+    u64 allow_time;
+#endif
+
     int pkt_len;
 
     u64 ip_pps;

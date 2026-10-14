@@ -457,6 +457,13 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
                 filter->block_time = block_time;
             }
 
+            int allow_time;
+
+            if (config_setting_lookup_int(filter_cfg, "allow_time", &allow_time) == CONFIG_TRUE)
+            {
+                filter->allow_time = allow_time;
+            }
+
             // IP PPS (not required).
             s64 ip_pps;
 
@@ -1212,6 +1219,7 @@ void set_filter_defaults(filter_rule_cfg_t* filter)
 
     filter->action = 1;
     filter->block_time = 1;
+    filter->allow_time = 0;
 
     filter->ip_pps = -1;
     filter->ip_bps = -1;

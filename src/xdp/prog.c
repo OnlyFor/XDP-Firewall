@@ -212,69 +212,6 @@ int xdp_prog_main(struct xdp_md *ctx)
     }
 #endif
 
-#ifdef ENABLE_UDP_JUNK_FILTER
-    // Drop UDP junk: multicast/broadcast destinations or known junk ports.
-    // Self-contained — does not depend on udph from ENABLE_FILTERS block.
-    if ((iph && iph->protocol == IPPROTO_UDP) ||
-        (iph6 && iph6->nexthdr == IPPROTO_UDP))
-    {
-        struct udphdr *udph_j = iph
-            ? (void *)iph + (iph->ihl * 4)
-            : (void *)iph6 + sizeof(struct ipv6hdr);
-
-        if (likely((void *)udph_j + sizeof(struct udphdr) <= data_end))
-        {
-            int junk_dst = 0;
-
-            if (iph)
-            {
-                // 224.0.0.0/4 multicast: MSB byte in [0xE0, 0xEF].
-                // 255.255.255.255 limited broadcast: all-ones (same in any byte order).
-                u8 msb = *((u8 *)&iph->daddr);
-                junk_dst = (msb >= 0xE0 && msb <= 0xEF) || (iph->daddr == 0xFFFFFFFF);
-            }
-            else
-            {
-                // IPv6 multicast = ff00::/8.
-                junk_dst = (iph6->daddr.in6_u.u6_addr8[0] == 0xff);
-            }
-
-            // Multicast/broadcast short-circuits first; only non-multicast
-            // packets reach the port checks.
-            u16 dport = ntohs(udph_j->dest);
-
-            if (junk_dst ||
-                dport == 5353  ||                   // mDNS
-                dport == 1900  ||                   // UPnP/SSDP
-                dport == 5355  ||                   // LLMNR
-                dport == 5060  ||                   // SIP
-                dport == 161   ||                   // SNMP
-                dport == 389   ||                   // CLDAP（苹果，公网反射放大）
-                dport == 17    ||                   // QOTD（经典反射源，~100x 放大）
-                dport == 5683  ||                   // CoAP/LwM2M（IoT 反射重灾区）
-                dport == 69    ||                   // TFTP
-                dport == 19    ||                   // chargen
-                dport == 111   ||                   // rpcbind/Portmapper
-                (dport >= 137 && dport <= 138) ||   // NetBIOS
-                dport == 67    ||                   // DHCP server
-                dport == 21027 ||                   // Syncthing
-                dport == 1968  ||                   // ?
-                dport == 4466  ||                   // ?
-                dport == 33445 ||                  // Tailscale
-                // ↓ Uncomment if not running these services:
-                // dport == 123   ||                // NTP
-                // dport == 53    ||                // DNS
-                // dport == 11211 ||                // memcached
-                0)
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-
-                return XDP_DROP;
-            }
-        }
-    }
-#endif
-
 #ifdef ENABLE_NDP_FILTER
     if (iph6 && iph6->nexthdr == IPPROTO_ICMPV6)
     {
@@ -321,6 +258,140 @@ int xdp_prog_main(struct xdp_md *ctx)
             }
         }
     }
+#endif
+
+#ifdef ENABLE_UDP_JUNK_FILTER
+    // Drop UDP junk: multicast/broadcast destinations or known junk ports.
+    // Self-contained — does not depend on udph from ENABLE_FILTERS block.
+    if ((iph && iph->protocol == IPPROTO_UDP) ||
+        (iph6 && iph6->nexthdr == IPPROTO_UDP))
+    {
+        struct udphdr *udph_j = iph
+            ? (void *)iph + (iph->ihl * 4)
+            : (void *)iph6 + sizeof(struct ipv6hdr);
+
+        if (likely((void *)udph_j + sizeof(struct udphdr) <= data_end))
+        {
+            // Multicast/broadcast short-circuits first; only non-multicast
+            // packets reach the port checks.
+            u16 dport = ntohs(udph_j->dest);
+
+            int junk_port = (
+                dport == 5353  ||                   // mDNS
+                dport == 1900  ||                   // UPnP/SSDP
+                dport == 5355  ||                   // LLMNR
+                dport == 5060  ||                   // SIP
+                dport == 161   ||                   // SNMP
+                dport == 389   ||                   // CLDAP（苹果，公网反射放大）
+                dport == 17    ||                   // QOTD（经典反射源，~100x 放大）
+                dport == 5683  ||                   // CoAP/LwM2M（IoT 反射重灾区）
+                dport == 69    ||                   // TFTP
+                dport == 19    ||                   // chargen
+                dport == 111   ||                   // rpcbind/Portmapper
+                (dport >= 137 && dport <= 138) ||   // NetBIOS
+                dport == 67    ||                   // DHCP server
+                dport == 21027 ||                   // Syncthing
+                dport == 1968  ||                   // ?
+                dport == 4466  ||                   // ?
+                dport == 33445 ||                  // Tailscale
+                // ↓ Uncomment if not running these services:
+                // dport == 123   ||                // NTP
+                // dport == 53    ||                // DNS
+                // dport == 11211 ||                // memcached
+                0);
+
+            // Junk ports — unconditional drop, no map lookup needed.
+            if (junk_port)
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                return XDP_DROP;
+            }
+
+            int junk_dst = 0;
+
+            if (iph)
+            {
+                // 224.0.0.0/4 multicast: MSB byte in [0xE0, 0xEF].
+                // 255.255.255.255 limited broadcast: all-ones (same in any byte order).
+                u8 msb = *((u8 *)&iph->daddr);
+                junk_dst = (msb >= 0xE0 && msb <= 0xEF) || (iph->daddr == 0xFFFFFFFF);
+            }
+#ifdef ENABLE_IPV6
+            else if (iph6)
+            {
+                // IPv6 multicast = ff00::/8.
+                junk_dst = (iph6->daddr.in6_u.u6_addr8[0] == 0xff);
+            }
+#endif
+            // Multicast/broadcast destination — check loopback before dropping.
+            if (junk_dst)
+            {
+#if defined(ENABLE_ARP_FILTER) || defined(ENABLE_NDP_FILTER)
+                int is_loopback = 0;
+
+#ifdef ENABLE_ARP_FILTER
+                if (iph)
+                {
+                    u32 saddr;
+                    __builtin_memcpy(&saddr, &iph->saddr, sizeof(saddr));
+
+                    u8 *local = bpf_map_lookup_elem(&map_my_ip, &saddr);
+                    is_loopback = (local != NULL);
+                }
+#endif
+#ifdef ENABLE_NDP_FILTER
+#ifdef ENABLE_IPV6
+                else if (iph6)
+                {
+                    u8 *local6 = bpf_map_lookup_elem(&map_my_ip6, &src_ip6);
+                    is_loopback = (local6 != NULL);
+                }
+#endif
+#endif
+
+                if (!is_loopback)
+                {
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                    return XDP_DROP;
+                }
+#else
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+
+                return XDP_DROP;
+#endif
+            }
+        }
+    }
+#endif
+
+#ifdef ENABLE_ALLOW_CACHE
+    // Check allow cache — skip filter loop if recently allowed.
+    if (iph)
+    {
+        u64 *allowed = bpf_map_lookup_elem(&map_allow, &iph->saddr);
+
+        if (allowed && *allowed > now)
+        {
+            inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
+
+            return XDP_PASS;
+        }
+    }
+#ifdef ENABLE_IPV6
+    else if (iph6)
+    {
+        u64 *allowed6 = bpf_map_lookup_elem(&map_allow6, &src_ip6);
+
+        if (allowed6 && *allowed6 > now)
+        {
+            inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
+
+            return XDP_PASS;
+        }
+    }
+#endif
 #endif
 
 #ifdef ENABLE_FILTERS
@@ -575,6 +646,24 @@ matched:
     }
     else
     {
+#ifdef ENABLE_ALLOW_CACHE
+        // Cache this source IP to skip filter loop on future packets.
+        if (rule.allow_time > 0)
+        {
+            u64 expire = now + (rule.allow_time * NANO_TO_SEC);
+
+            if (iph)
+            {
+                bpf_map_update_elem(&map_allow, &iph->saddr, &expire, BPF_ANY);
+            }
+#ifdef ENABLE_IPV6
+            else
+            {
+                bpf_map_update_elem(&map_allow6, &src_ip6, &expire, BPF_ANY);
+            }
+#endif
+        }
+#endif
         inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
     }
 

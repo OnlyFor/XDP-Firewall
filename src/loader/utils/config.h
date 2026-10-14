@@ -72,6 +72,8 @@ struct filter_rule_cfg
     int action;
     int block_time;
 
+    int allow_time;          // ← 新增
+
     s64 ip_pps;
     s64 ip_bps;
 

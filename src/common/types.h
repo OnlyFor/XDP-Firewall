@@ -110,6 +110,10 @@ struct filter
     u8 action;
     u16 block_time;
 
+#ifdef ENABLE_ALLOW_CACHE
+    u16 allow_time;          // ← 新增
+#endif
+
 #ifdef ENABLE_RL_IP
     unsigned int do_ip_pps : 1;
     u64 ip_pps;
@@ -125,7 +129,7 @@ struct filter
     unsigned int do_flow_bps : 1;
     u64 flow_bps;
 #endif
-    
+
     filter_ip_t ip;
 
     filter_tcp_t tcp;
