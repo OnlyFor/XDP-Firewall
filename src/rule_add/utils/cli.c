@@ -19,7 +19,7 @@ const struct option opts[] =
     { "action", required_argument, NULL, 29 },
     { "log", required_argument, NULL, 30 },
     { "block-time", required_argument, NULL, 31 },
-    { "allow-time", required_argument, NULL, 99 },       // ← 新增，99 避免冲突
+    { "allow-time", required_argument, NULL, 98 },       // ← 新增，98 避免冲突
 
     { "sip", required_argument, NULL, 0 },
     { "dip", required_argument, NULL, 1 },
@@ -128,7 +128,7 @@ void parse_cli(cli_t* cli, int argc, char* argv[])
 
                 break;
 
-            case 99:
+            case 98:
                 cli->allow_time = atoi(optarg);
 
                 break;
