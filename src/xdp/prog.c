@@ -278,6 +278,27 @@ int xdp_prog_main(struct xdp_md *ctx)
             u16 dport = ntohs(tcph_j->dest);
 
             int junk_port = (
+                dport == 20    ||                  // FTP data
+                dport == 21    ||                  // FTP control
+                dport == 631   ||                  // IPP/CUPS
+                dport == 3418  ||                  // IoT M2M
+
+                dport == 23    ||                  // Telnet — Mirai 系僵尸网络头号目标
+                dport == 2323  ||                  // Telnet 替代端口，同上
+                dport == 7547  ||                  // TR-069 CWMP — 全球路由器远程管理扫描量最大之一
+                dport == 8291  ||                  // MikroTik WinBox
+                dport == 8728  ||                  // MikroTik API
+                dport == 5555  ||                  // Android ADB
+                dport == 2375  ||                  // Docker API 未加密端口
+                dport == 9200  ||                  // Elasticsearch
+                dport == 37215 ||                  // 华为路由器远程代码执行扫描
+                dport == 53413 ||                  // Netis 路由器后门扫描
+                dport == 52869 ||                  // 芯片级/路由器固件扫描
+                dport == 55552 ||                  // Mirai 变种
+                dport == 81    ||                  // 常见摄像头/Web 管理口探测
+                dport == 8888  ||                  // 宝塔面板/各类 Web admin 扫描
+                dport == 10250 ||                  // Kubernetes kubelet
+
                 (dport >= 135 && dport <= 139) ||  // MS-RPC/NetBIOS
                 dport == 445   ||                  // SMB
                 dport == 593   ||                  // MS-RPC HTTP
@@ -440,6 +461,16 @@ int xdp_prog_main(struct xdp_md *ctx)
             u16 dport = ntohs(udph_j->dest);
 
             int junk_port = (
+                dport == 3418  ||                  // IoT M2M
+
+                dport == 1434  ||                   // MS-SQL Browser — 反射放大源
+                dport == 623   ||                   // IPMI — 服务器带外管理，VPS 没有
+                dport == 520   ||                   // RIP 路由协议
+                dport == 53413 ||                   // Netis
+                dport == 17185 ||                   // 一些 IoT 蠕虫常用端口
+                dport == 27015 ||                   // Steam/游戏服务器探测（不跑游戏服务可丢）
+                dport == 64738 ||                   // Mumble — 常被扫
+
                 dport == 5353  ||                   // mDNS
                 dport == 1900  ||                   // UPnP/SSDP
                 dport == 5355  ||                   // LLMNR
@@ -457,10 +488,10 @@ int xdp_prog_main(struct xdp_md *ctx)
                 dport == 1968  ||                   // ?
                 dport == 4466  ||                   // ?
                 dport == 33445 ||                  // Tailscale
+                dport == 11211 ||                // memcached
                 // ↓ Uncomment if not running these services:
                 // dport == 123   ||                // NTP
                 // dport == 53    ||                // DNS
-                // dport == 11211 ||                // memcached
                 0);
 
             // Junk ports — unconditional drop, no map lookup needed.
