@@ -261,12 +261,10 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
         filter.block_time = filter_cfg->block_time;
     }
 
-#ifdef ENABLE_ALLOW_CACHE
     if (filter_cfg->allow_time > 0)
     {
         filter.allow_time = filter_cfg->allow_time;
     }
-#endif
 
 #ifdef ENABLE_RL_IP
     if (filter_cfg->ip_pps > -1)

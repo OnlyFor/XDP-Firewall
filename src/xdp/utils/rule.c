@@ -308,9 +308,7 @@ static __always_inline long process_rule(u32 idx, void* data)
     ctx->action = filter->action;
     ctx->block_time = filter->block_time;
 
-#ifdef ENABLE_ALLOW_CACHE
     ctx->allow_time = filter->allow_time;
-#endif
 
     return 1;
 }

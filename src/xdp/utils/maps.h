@@ -57,7 +57,6 @@ struct
 } map_my_ip6 SEC(".maps");
 #endif
 
-#ifdef ENABLE_ALLOW_CACHE
 struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -74,7 +73,6 @@ struct
     __type(key, allow_key6_t);
     __type(value, u64);
 } map_allow6 SEC(".maps");
-#endif
 #endif
 
 #ifdef ENABLE_IPV6

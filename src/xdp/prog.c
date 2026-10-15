@@ -743,7 +743,6 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
 #endif
 
-#ifdef ENABLE_ALLOW_CACHE
     // Check allow cache — skip filter loop if this flow was recently allowed.
     // Requires L4 headers parsed above (tcph/udph from ENABLE_FILTERS block).
     if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP)
@@ -853,7 +852,6 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
         }
     }
-#endif
 
     // Create rule context.
     rule_ctx_t rule = {0};
@@ -929,7 +927,6 @@ matched:
     }
     else
     {
-#ifdef ENABLE_ALLOW_CACHE
         // Cache this flow (5-tuple) to skip filter loop on future packets.
         if (rule.allow_time > 0 && (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP))
         {
@@ -997,7 +994,6 @@ matched:
 
                         bpf_map_update_elem(&map_allow6, &akey6, &expire, BPF_ANY);
                     }
-#endif
                 }
             }
         }

@@ -110,9 +110,7 @@ struct filter
     u8 action;
     u16 block_time;
 
-#ifdef ENABLE_ALLOW_CACHE
     u16 allow_time;          // ← 新增
-#endif
 
 #ifdef ENABLE_RL_IP
     unsigned int do_ip_pps : 1;
@@ -197,7 +195,6 @@ struct lpm_trie_key
     u32 data;
 } typedef lpm_trie_key_t;
 
-#ifdef ENABLE_ALLOW_CACHE
 struct allow_key4
 {
     u32 src_ip;
@@ -216,5 +213,4 @@ struct allow_key6
     u16 dst_port;
     u8  protocol;
 } typedef allow_key6_t;
-#endif
 #endif
