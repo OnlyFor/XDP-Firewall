@@ -1414,6 +1414,7 @@ void print_filter(filter_rule_cfg_t* filter, int idx)
 
     printf("\t\tAction => %d (0 = Block, 1 = Allow)\n", filter->action);
     printf("\t\tBlock Time => %d\n\n", filter->block_time);
+    printf("\t\tBlock Time => %d\n\n", filter->allow_time);
 
     printf("\t\tIP PPS => %lld\n", filter->ip_pps);
     printf("\t\tIP BPS => %lld\n", filter->ip_bps);
