@@ -2,13 +2,13 @@
 
 /**
  * Prints a log message to stdout/stderr along with a file if specified.
- * 
+ *
  * @param req_lvl The required level for this message.
  * @param cur_lvl The current verbose level.
  * @param error If 1, sets pipe to stderr instead of stdout.
  * @param msg The log message.
  * @param args A VA list of arguments for the message.
- * 
+ *
  * @return void
  */
 static void log_msg_raw(int req_lvl, int cur_lvl, int error, const char* log_path, const char* msg, va_list args)
@@ -46,7 +46,7 @@ static void log_msg_raw(int req_lvl, int cur_lvl, int error, const char* log_pat
     if (doing_stats)
     {
         printf("\033[F");
-        
+
         fprintf(pipe, "\n%s\n", full_msg);
 
     }
@@ -87,12 +87,12 @@ static void log_msg_raw(int req_lvl, int cur_lvl, int error, const char* log_pat
 
 /**
  * Prints a log message using log_msg_raw().
- * 
+ *
  * @param cfg A pointer to the config structure.
  * @param req_lvl The required level for this message.
  * @param error Whether this is an error.
  * @param msg The log message with format support.
- * 
+ *
  * @return void
  */
 void log_msg(config__t* cfg, int req_lvl, int error, const char* msg, ...)
@@ -107,9 +107,9 @@ void log_msg(config__t* cfg, int req_lvl, int error, const char* msg, ...)
 
 /**
  * Polls the filters map ringbuffer.
- * 
+ *
  * @param rb A pointer to the ringbuffer.
- * 
+ *
  * @return void
  */
 void poll_filters_rb(struct ring_buffer* rb)
@@ -122,11 +122,11 @@ void poll_filters_rb(struct ring_buffer* rb)
 
 /**
  * Callback for BPF ringbuffer event (filter logging).
- * 
+ *
  * @param ctx The context (should be config__t*).
  * @param data The event data (should be filter_log_event_t*).
  * @param sz The event data size.
- * 
+ *
  * @return 0 on success or 1 on failure.
  */
 int hdl_filters_rb_event(void* ctx, void* data, size_t sz)
@@ -156,7 +156,7 @@ int hdl_filters_rb_event(void* ctx, void* data, size_t sz)
     }
 
     char* action = "Dropped";
-    
+
     if (filter->action == 1)
     {
         action = "Passed";
@@ -164,7 +164,8 @@ int hdl_filters_rb_event(void* ctx, void* data, size_t sz)
 
     const char* protocol_str = get_protocol_str_by_id(e->protocol);
 
-    log_msg(cfg, 0, 0, "[FILTER %d] %s %s packet '%s:%d' => '%s:%d' (IP PPS => %llu, IP BPS => %llu, Flow PPS => %llu, Flow BPS => %llu Filter Block Time => %llu, length => %d)...", e->filter_id + 1, action, protocol_str, src_ip_str, htons(e->src_port), dst_ip_str, htons(e->dst_port), e->ip_pps, e->ip_bps, e->flow_pps, e->flow_bps, filter->block_time, e->length);
+    // log_msg(cfg, 0, 0, "[FILTER %d] %s %s packet '%s:%d' => '%s:%d' (IP PPS => %llu, IP BPS => %llu, Flow PPS => %llu, Flow BPS => %llu Filter Block Time => %llu, length => %d)...", e->filter_id + 1, action, protocol_str, src_ip_str, htons(e->src_port), dst_ip_str, htons(e->dst_port), e->ip_pps, e->ip_bps, e->flow_pps, e->flow_bps, filter->block_time, e->length);
+    log_msg(cfg, 0, 0, "[FILTER %d] %s %s packet '%s:%d' => '%s:%d' (IP PPS => %llu, IP BPS => %llu, Flow PPS => %llu, Flow BPS => %llu Filter Block Time => %llu, Filter Allow Time => %llu, length => %d)...", e->filter_id + 1, action, protocol_str, src_ip_str, htons(e->src_port), dst_ip_str, htons(e->dst_port), e->ip_pps, e->ip_bps, e->flow_pps, e->flow_bps, filter->block_time, filter->allow_time, e->length);
 
     return 0;
 }
