@@ -80,8 +80,14 @@
 // 最多可以定义的 IP6 数
 #define MAX_MY_IP6S 32
 
+// 过滤常见的 VPS TCP 垃圾流量
+#define ENABLE_TCP_JUNK_FILTER
 // 过滤常见的 VPS UDP 垃圾流量
 #define ENABLE_UDP_JUNK_FILTER
+
+#if defined(ENABLE_UDP_JUNK_FILTER) || defined(ENABLE_TCP_JUNK_FILTER)
+#define JUNK_FILTER_BLOCK_TIME 900     // 扫描 junk 端口后封禁秒数，0 = 不封只丢
+#endif
 
 // 新增 allow 缓存提升性能
 #define ENABLE_ALLOW_CACHE

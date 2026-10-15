@@ -262,6 +262,167 @@ int xdp_prog_main(struct xdp_md *ctx)
     }
 #endif
 
+#ifdef ENABLE_TCP_JUNK_FILTER
+    // Drop TCP junk: multicast/broadcast destinations or known junk ports.
+    // Self-contained — does not depend on tcph from ENABLE_FILTERS block.
+    // No loopback exemption: TCP cannot legitimately target multicast/broadcast (RFC 793).
+    if ((iph && iph->protocol == IPPROTO_TCP) ||
+        (iph6 && iph6->nexthdr == IPPROTO_TCP))
+    {
+        struct tcphdr *tcph_j = iph
+            ? (void *)iph + (iph->ihl * 4)
+            : (void *)iph6 + sizeof(struct ipv6hdr);
+
+        if (likely((void *)tcph_j + sizeof(struct tcphdr) <= data_end))
+        {
+            u16 dport = ntohs(tcph_j->dest);
+
+            int junk_port = (
+                (dport >= 135 && dport <= 139) ||  // MS-RPC/NetBIOS
+                dport == 445   ||                  // SMB
+                dport == 593   ||                  // MS-RPC HTTP
+                dport == 7680  ||                  // Windows Delivery Optimization
+                dport == 5357  ||                  // WSD
+                dport == 5358  ||                  // WSD Secure
+                (dport >= 49664 && dport <= 49670) ||  // WinRPC dynamic range
+                dport == 3306 ||               // MySQL
+                dport == 5432 ||               // PostgreSQL
+                dport == 3389 ||                     // RDP (uncomment-safe on Linux VPS)
+                // ↓ Uncomment if not running these services:
+                // dport == 6379 ||               // Redis
+                // dport == 1433 ||               // MSSQL
+                // dport == 27017                 // MongoDB
+                0);
+
+            if (junk_port)
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // Multicast/broadcast destination — always invalid for TCP.
+            int junk_dst = 0;
+
+            if (iph)
+            {
+                u8 msb = *((u8 *)&iph->daddr);
+                junk_dst = (msb >= 0xE0 && msb <= 0xEF) || (iph->daddr == 0xFFFFFFFF);
+            }
+#ifdef ENABLE_IPV6
+            else if (iph6)
+            {
+                junk_dst = (iph6->daddr.in6_u.u6_addr8[0] == 0xff);
+            }
+#endif
+
+            if (junk_dst)
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+#if defined(ENABLE_ARP_FILTER)
+            // ---- Step 1: Illegal SYN by frame length ----
+            // SYN=1, all other flags=0, but frame length outside [62, 604].
+            // Illegal pure SYN: SYN=1, all other flags=0, abnormal frame length.
+            // Legitimate SYN frames: Linux/Android ~74B, Windows ~66B, macOS ~74B,
+            // TFO cookie SYN ~589B. Floor 62B (4B tolerance below Windows min),
+            // ceiling 604B. Length check only applies to packets addressed to
+            // our own IPs (map_my_ip), IPv4 only — same scope as the original rules.
+            if (iph && tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
+                !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
+            {
+                u16 flen = data_end - data;
+
+                if (flen < 62 || flen > 604)
+                {
+                    // Copy dst to stack for map lookup (same pattern as saddr
+                    // in junk_block_src — packet pointer as map key risks
+                    // verifier rejection on older kernels).
+                    u32 daddr_j;
+                    __builtin_memcpy(&daddr_j, &iph->daddr, sizeof(daddr_j));
+
+                    u8 *own = bpf_map_lookup_elem(&map_my_ip, &daddr_j);
+
+                    if (own)
+                    {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                        junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                        return XDP_DROP;
+                    }
+                }
+            }
+
+            // ---- Step 2: Illegal SYN flag combos to service ports ----
+            // Legitimate: pure SYN (ack=0) or SYN+ACK (ack=1), no other flags.
+            // Anything with SYN + FIN/RST/PSH/URG = scan probe, regardless of ACK.
+            if (iph && tcph_j->syn)
+            {
+                // 重点检测的端口，可以按需扩充
+                int is_service_port = (dport == 80) || (dport == 443) || (dport == 22);
+
+                if (is_service_port)
+                {
+                    int illegal_flags = tcph_j->fin || tcph_j->rst ||
+                                        tcph_j->psh || tcph_j->urg;
+
+                    if (illegal_flags)
+                    {
+                        u32 daddr_j;
+                        __builtin_memcpy(&daddr_j, &iph->daddr, sizeof(daddr_j));
+                        u8 *own = bpf_map_lookup_elem(&map_my_ip, &daddr_j);
+
+                        if (own)
+                        {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                            return XDP_DROP;
+                        }
+                    }
+                }
+            }
+#endif
+
+            // Step 3: NULL scan — all six flags clear is never valid TCP.
+            // nmap -sN sends exactly this; no legit stack emits it.
+            if (!tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
+                !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // Step 4: Stealth scan — FIN/PSH/URG without SYN or ACK.
+            // Post-handshake packets always carry ACK; RST is excluded
+            // because RST-without-ACK is the legit "port closed" reply.
+            // Xmas (FIN+PSH+URG) and FIN-only scans land here.
+            if (!tcph_j->syn && !tcph_j->ack && !tcph_j->rst &&
+                (tcph_j->fin || tcph_j->psh || tcph_j->urg))
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+        }
+    }
+#endif
+
 #ifdef ENABLE_UDP_JUNK_FILTER
     // Drop UDP junk: multicast/broadcast destinations or known junk ports.
     // Self-contained — does not depend on udph from ENABLE_FILTERS block.
@@ -305,8 +466,10 @@ int xdp_prog_main(struct xdp_md *ctx)
             // Junk ports — unconditional drop, no map lookup needed.
             if (junk_port)
             {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-
                 return XDP_DROP;
             }
 
@@ -354,13 +517,16 @@ int xdp_prog_main(struct xdp_md *ctx)
 
                 if (!is_loopback)
                 {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                    junk_block_src(iph, iph6, &src_ip6, now);
+#endif
                     inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-
                     return XDP_DROP;
                 }
 #else
+                // No loopback check available — drop but don't block,
+                // since the source could be our own IP.
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-
                 return XDP_DROP;
 #endif
             }

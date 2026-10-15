@@ -44,3 +44,57 @@ static __always_inline int check_ip_range_drop(u32 ip);
 // I'd prefer not to include the function logic inside of the header file.
 // More Info: https://stackoverflow.com/questions/24289599/always-inline-does-not-work-when-function-is-implemented-in-different-file
 #include "helpers.c"
+
+
+#if defined(ENABLE_UDP_JUNK_FILTER) || defined(ENABLE_TCP_JUNK_FILTER)
+#if JUNK_FILTER_BLOCK_TIME > 0
+static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* iph6, u128* src_ip6, u64 now)
+{
+    if (iph)
+    {
+        u8 src_msb = *((u8 *)&iph->saddr);
+
+        int is_private = (src_msb == 10) ||                                              // 10/8
+                         (src_msb == 100 && (*((u8 *)&iph->saddr + 1) >= 64) && (*((u8 *)&iph->saddr + 1) <= 127)) ||  // 100.64/10 CGNAT
+                         (src_msb == 127) ||                                              // 127/8
+                         (src_msb == 169 && (*((u8 *)&iph->saddr + 1) == 254)) ||        // 169.254/16 link-local/metadata
+                         (src_msb == 172 && (*((u8 *)&iph->saddr + 1) >= 16) && (*((u8 *)&iph->saddr + 1) <= 31)) ||  // 172.16/12
+                         (src_msb == 192 && (*((u8 *)&iph->saddr + 1) == 168));          // 192.168/16
+
+        if (!is_private && src_msb < 224 && iph->saddr != 0)
+        {
+#if defined(ENABLE_ARP_FILTER)
+            u32 saddr_j;
+            __builtin_memcpy(&saddr_j, &iph->saddr, sizeof(saddr_j));
+            u8 *own = bpf_map_lookup_elem(&map_my_ip, &saddr_j);
+            if (!own)
+#endif
+            {
+                u32 saddr_b;
+                __builtin_memcpy(&saddr_b, &iph->saddr, sizeof(saddr_b));  // ← 栈上拷贝
+                u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
+                bpf_map_update_elem(&map_block, &saddr_b, &expire, BPF_ANY);  // ← 用栈变量
+            }
+        }
+    }
+#ifdef ENABLE_IPV6
+    else if (iph6)
+    {
+        u8 s6_msb = iph6->saddr.in6_u.u6_addr8[0];
+
+        if (s6_msb != 0 && s6_msb < 0xfc)
+        {
+#if defined(ENABLE_NDP_FILTER)
+            u8 *own6 = bpf_map_lookup_elem(&map_my_ip6, src_ip6);
+            if (!own6)
+#endif
+            {
+                u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
+                bpf_map_update_elem(&map_block6, src_ip6, &expire, BPF_ANY);  // src_ip6 已是栈变量，OK
+            }
+        }
+    }
+#endif
+}
+#endif
+#endif
