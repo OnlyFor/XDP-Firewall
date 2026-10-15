@@ -549,77 +549,112 @@ int xdp_prog_main(struct xdp_md *ctx)
 #ifdef ENABLE_ALLOW_CACHE
     // Check allow cache — skip filter loop if this flow was recently allowed.
     // Requires L4 headers parsed above (tcph/udph from ENABLE_FILTERS block).
-    u8 have_l4 = (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP);
-    if (have_l4)
+    if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP)
     {
-        u16 sport = tcph ? tcph->source : udph->source;
-        u16 dport = tcph ? tcph->dest   : udph->dest;
-        u8  proto = tcph ? IPPROTO_TCP  : IPPROTO_UDP;
+        u16 sport, dport;
+        u8 proto;
+        int has_l4 = 0;
 
-        if (iph)
+        if (tcph)
         {
-            allow_key4_t akey = {0};
-            akey.src_ip   = iph->saddr;
-            akey.dst_ip   = iph->daddr;
-            akey.src_port = sport;
-            akey.dst_port = dport;
-            akey.protocol = proto;
+            sport = tcph->source;
+            dport = tcph->dest;
+            proto = IPPROTO_TCP;
+            has_l4 = 1;
+        }
+        else if (udph)
+        {
+            sport = udph->source;
+            dport = udph->dest;
+            proto = IPPROTO_UDP;
+            has_l4 = 1;
+        }
 
-            u64 *allowed = bpf_map_lookup_elem(&map_allow, &akey);
-
-            if (allowed && *allowed > now)
+        if (has_l4)
+        {
+            if (iph)
             {
-#ifdef ENABLE_RL_IP
-                // Rate guard: evict from cache if flooding.
-                // 检查块
-                if ((ALLOW_CACHE_MAX_FLOW_PPS > 0 && flow_pps > ALLOW_CACHE_MAX_FLOW_PPS) ||
-                    (ALLOW_CACHE_MAX_FLOW_BPS > 0 && flow_bps > ALLOW_CACHE_MAX_FLOW_BPS) ||
-                    (ALLOW_CACHE_MAX_IP_PPS > 0 && ip_pps > ALLOW_CACHE_MAX_IP_PPS) ||
-                    (ALLOW_CACHE_MAX_IP_BPS > 0 && ip_bps > ALLOW_CACHE_MAX_IP_BPS))
-                {
-                    bpf_map_delete_elem(&map_allow, &akey);
-                }
-                else
-#endif
-                {
-                    inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
+                allow_key4_t akey = {0};
+                akey.src_ip   = iph->saddr;
+                akey.dst_ip   = iph->daddr;
+                akey.src_port = sport;
+                akey.dst_port = dport;
+                akey.protocol = proto;
 
-                    return XDP_PASS;
+                u64 *allowed = bpf_map_lookup_elem(&map_allow, &akey);
+
+                if (allowed && *allowed > now)
+                {
+                    int over_rate = 0;
+
+#ifdef ENABLE_RL_FLOW
+                    if ((ALLOW_CACHE_MAX_FLOW_PPS > 0 && flow_pps > ALLOW_CACHE_MAX_FLOW_PPS) ||
+                        (ALLOW_CACHE_MAX_FLOW_BPS > 0 && flow_bps > ALLOW_CACHE_MAX_FLOW_BPS))
+                    {
+                        over_rate = 1;
+                    }
+#endif
+#ifdef ENABLE_RL_IP
+                    if ((ALLOW_CACHE_MAX_IP_PPS > 0 && ip_pps > ALLOW_CACHE_MAX_IP_PPS) ||
+                        (ALLOW_CACHE_MAX_IP_BPS > 0 && ip_bps > ALLOW_CACHE_MAX_IP_BPS))
+                    {
+                        over_rate = 1;
+                    }
+#endif
+                    if (over_rate)
+                    {
+                        bpf_map_delete_elem(&map_allow, &akey);
+                    }
+                    else
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
+                        return XDP_PASS;
+                    }
                 }
             }
-        }
 #ifdef ENABLE_IPV6
-        else if (iph6)
-        {
-            allow_key6_t akey6 = {0};
-            akey6.src_ip6   = src_ip6;
-            akey6.dst_ip6   = dst_ip6;
-            akey6.src_port  = sport;
-            akey6.dst_port  = dport;
-            akey6.protocol  = proto;
-
-            u64 *allowed6 = bpf_map_lookup_elem(&map_allow6, &akey6);
-
-            if (allowed6 && *allowed6 > now)
+            else if (iph6)
             {
-#ifdef ENABLE_RL_IP
-                if ((ALLOW_CACHE_MAX_FLOW_PPS > 0 && flow_pps > ALLOW_CACHE_MAX_FLOW_PPS) ||
-                    (ALLOW_CACHE_MAX_FLOW_BPS > 0 && flow_bps > ALLOW_CACHE_MAX_FLOW_BPS) ||
-                    (ALLOW_CACHE_MAX_IP_PPS > 0 && ip_pps > ALLOW_CACHE_MAX_IP_PPS) ||
-                    (ALLOW_CACHE_MAX_IP_BPS > 0 && ip_bps > ALLOW_CACHE_MAX_IP_BPS))
-                {
-                    bpf_map_delete_elem(&map_allow6, &akey6);
-                }
-                else
-#endif
-                {
-                    inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
+                allow_key6_t akey6 = {0};
+                akey6.src_ip6   = src_ip6;
+                akey6.dst_ip6   = dst_ip6;
+                akey6.src_port  = sport;
+                akey6.dst_port  = dport;
+                akey6.protocol  = proto;
 
-                    return XDP_PASS;
+                u64 *allowed6 = bpf_map_lookup_elem(&map_allow6, &akey6);
+
+                if (allowed6 && *allowed6 > now)
+                {
+                    int over_rate = 0;
+
+#ifdef ENABLE_RL_FLOW
+                    if ((ALLOW_CACHE_MAX_FLOW_PPS > 0 && flow_pps > ALLOW_CACHE_MAX_FLOW_PPS) ||
+                        (ALLOW_CACHE_MAX_FLOW_BPS > 0 && flow_bps > ALLOW_CACHE_MAX_FLOW_BPS))
+                    {
+                        over_rate = 1;
+                    }
+#endif
+#ifdef ENABLE_RL_IP
+                    if ((ALLOW_CACHE_MAX_IP_PPS > 0 && ip_pps > ALLOW_CACHE_MAX_IP_PPS) ||
+                        (ALLOW_CACHE_MAX_IP_BPS > 0 && ip_bps > ALLOW_CACHE_MAX_IP_BPS))
+                    {
+                        over_rate = 1;
+                    }
+#endif
+                    if (over_rate)
+                    {
+                        bpf_map_delete_elem(&map_allow6, &akey6);
+                    }
+                    else
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
+                        return XDP_PASS;
+                    }
                 }
             }
-        }
 #endif
+        }
     }
 #endif
 
@@ -699,55 +734,78 @@ matched:
     {
 #ifdef ENABLE_ALLOW_CACHE
         // Cache this flow (5-tuple) to skip filter loop on future packets.
-        u8 have_l4 = (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP);
-        if (rule.allow_time > 0 && have_l4)
+        if (rule.allow_time > 0 && (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP))
         {
-            int over_rate = 0;
+            u16 sport, dport;
+            u8 proto;
+            int has_l4 = 0;
+
+            if (tcph)
+            {
+                sport = tcph->source;
+                dport = tcph->dest;
+                proto = IPPROTO_TCP;
+                has_l4 = 1;
+            }
+            else if (udph)
+            {
+                sport = udph->source;
+                dport = udph->dest;
+                proto = IPPROTO_UDP;
+                has_l4 = 1;
+            }
+
+            if (has_l4)
+            {
+                int over_rate = 0;
+
 #ifdef ENABLE_RL_FLOW
-            over_rate = over_rate ||
-                        (ALLOW_CACHE_MAX_FLOW_PPS > 0 && flow_pps > ALLOW_CACHE_MAX_FLOW_PPS) ||
-                        (ALLOW_CACHE_MAX_FLOW_BPS > 0 && flow_bps > ALLOW_CACHE_MAX_FLOW_BPS);
+                if ((ALLOW_CACHE_MAX_FLOW_PPS > 0 && flow_pps > ALLOW_CACHE_MAX_FLOW_PPS) ||
+                    (ALLOW_CACHE_MAX_FLOW_BPS > 0 && flow_bps > ALLOW_CACHE_MAX_FLOW_BPS))
+                {
+                    over_rate = 1;
+                }
 #endif
 #ifdef ENABLE_RL_IP
-            over_rate = over_rate ||
-                        (ALLOW_CACHE_MAX_IP_PPS > 0 && ip_pps > ALLOW_CACHE_MAX_IP_PPS) ||
-                        (ALLOW_CACHE_MAX_IP_BPS > 0 && ip_bps > ALLOW_CACHE_MAX_IP_BPS);
-#endif
-            if (!over_rate)
-            {
-                u64 expire = now + (rule.allow_time * NANO_TO_SEC);
-
-                u16 sport = tcph ? tcph->source : udph->source;
-                u16 dport = tcph ? tcph->dest   : udph->dest;
-                u8  proto = tcph ? IPPROTO_TCP  : IPPROTO_UDP;
-
-                if (iph)
+                if ((ALLOW_CACHE_MAX_IP_PPS > 0 && ip_pps > ALLOW_CACHE_MAX_IP_PPS) ||
+                    (ALLOW_CACHE_MAX_IP_BPS > 0 && ip_bps > ALLOW_CACHE_MAX_IP_BPS))
                 {
-                    allow_key4_t akey = {0};
-                    akey.src_ip   = iph->saddr;
-                    akey.dst_ip   = iph->daddr;
-                    akey.src_port = sport;
-                    akey.dst_port = dport;
-                    akey.protocol = proto;
-
-                    bpf_map_update_elem(&map_allow, &akey, &expire, BPF_ANY);
+                    over_rate = 1;
                 }
+#endif
+                if (!over_rate)
+                {
+                    u64 expire = now + (rule.allow_time * NANO_TO_SEC);
+
+                    if (iph)
+                    {
+                        allow_key4_t akey = {0};
+                        akey.src_ip   = iph->saddr;
+                        akey.dst_ip   = iph->daddr;
+                        akey.src_port = sport;
+                        akey.dst_port = dport;
+                        akey.protocol = proto;
+
+                        bpf_map_update_elem(&map_allow, &akey, &expire, BPF_ANY);
+                    }
 #ifdef ENABLE_IPV6
-                else if (iph6)
-                {
-                    allow_key6_t akey6 = {0};
-                    akey6.src_ip6   = src_ip6;
-                    akey6.dst_ip6   = dst_ip6;
-                    akey6.src_port  = sport;
-                    akey6.dst_port  = dport;
-                    akey6.protocol  = proto;
+                    else if (iph6)
+                    {
+                        allow_key6_t akey6 = {0};
+                        akey6.src_ip6  = src_ip6;
+                        akey6.dst_ip6  = dst_ip6;
+                        akey6.src_port = sport;
+                        akey6.dst_port = dport;
+                        akey6.protocol = proto;
 
-                    bpf_map_update_elem(&map_allow6, &akey6, &expire, BPF_ANY);
-                }
+                        bpf_map_update_elem(&map_allow6, &akey6, &expire, BPF_ANY);
+                    }
 #endif
+                }
             }
         }
 #endif
+
         inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
     }
 
