@@ -549,7 +549,8 @@ int xdp_prog_main(struct xdp_md *ctx)
 #ifdef ENABLE_ALLOW_CACHE
     // Check allow cache — skip filter loop if this flow was recently allowed.
     // Requires L4 headers parsed above (tcph/udph from ENABLE_FILTERS block).
-    if (tcph || udph)
+    u8 have_l4 = (tcph != NULL) || (udph != NULL);
+    if (have_l4)
     {
         u16 sport = tcph ? tcph->source : udph->source;
         u16 dport = tcph ? tcph->dest   : udph->dest;
@@ -698,7 +699,8 @@ matched:
     {
 #ifdef ENABLE_ALLOW_CACHE
         // Cache this flow (5-tuple) to skip filter loop on future packets.
-        if (rule.allow_time > 0 && (tcph || udph))
+        u8 have_l4 = (tcph != NULL) || (udph != NULL);
+        if (rule.allow_time > 0 && have_l4)
         {
             int over_rate = 0;
 #ifdef ENABLE_RL_FLOW
