@@ -266,8 +266,15 @@ int xdp_prog_main(struct xdp_md *ctx)
     // Drop TCP junk: multicast/broadcast destinations or known junk ports.
     // Self-contained — does not depend on tcph from ENABLE_FILTERS block.
     // No loopback exemption: TCP cannot legitimately target multicast/broadcast (RFC 793).
-    if ((iph && iph->protocol == IPPROTO_TCP) ||
-        (iph6 && iph6->nexthdr == IPPROTO_TCP))
+
+    // Non-first fragments carry no TCP header — their payload would be
+    // misread as udphdr. Skip only the L4 checks; let the packet continue
+    // into ENABLE_FILTERS so IP-level stats and rules still apply.
+    // (First fragments offset==0 keep the header and are checked normally.)
+    int skip_l4 = (iph && (ntohs(iph->frag_off) & 0x1FFF));
+    if (!skip_l4 &&
+        ((iph && iph->protocol == IPPROTO_TCP) ||
+         (iph6 && iph6->nexthdr == IPPROTO_TCP)))
     {
         struct tcphdr *tcph_j = iph
             ? (void *)iph + (iph->ihl * 4)
@@ -275,8 +282,83 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         if (likely((void *)tcph_j + sizeof(struct tcphdr) <= data_end))
         {
-            u16 dport = ntohs(tcph_j->dest);
 
+            // ---- Step 0a: IPv4 header sanity (ihl / tot_len) ----
+            // ihl < 5 is a protocol violation and makes tcph_j point back
+            // into the IP header — every later L4 check would read garbage.
+            // tot_len < ihl*4 underflows u16 subtraction; both = malformed.
+            if (iph && (iph->ihl < 5 ||
+                        ntohs(iph->tot_len) < (iph->ihl * 4)))
+            {
+// src 不可信
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//                 junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // ---- Step 0b: LAND attack — src == dst on external NIC ----
+            // No legitimate packet received from an external interface has
+            // identical source and destination; 100% spoofed. Cheap compare.
+            {
+                int is_land = 0;
+
+                if (iph)
+                {
+                    is_land = (iph->saddr == iph->daddr);
+                }
+#ifdef ENABLE_IPV6
+                else if (iph6)
+                {
+                    is_land = (__builtin_memcmp(&src_ip6, &dst_ip6,
+                                                sizeof(src_ip6)) == 0);
+                }
+#endif
+
+                if (is_land)
+                {
+// land 是自己的 ip
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//                     junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
+            }
+
+            // ---- Step 0c: TCP port 0 — IANA reserved, no legal socket ----
+            // Same rationale as UDP Step B; network-order compare is free.
+            if (tcph_j->source == 0 || tcph_j->dest == 0)
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // ---- Step 0d: Fragmented SYN — RFC 1858 tiny-fragment attack ----
+            // A legit handshake SYN is tens of bytes, far under the minimum
+            // IPv4 MTU (576B) — it can never legitimately be fragmented.
+            // MF=1 + offset=0 on a SYN means the attacker's first fragment
+            // carries the header and later fragments hide the real payload
+            // from filters. IPv6 fragments never reach here (nexthdr=44).
+            if (iph && tcph_j->syn &&
+                (ntohs(iph->frag_off) & 0x2000))
+            {
+// src 不可信
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//                 junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // port 防御
+
+            u16 dport = ntohs(tcph_j->dest);
+            // 注意本机 net.ipv4.ip_local_port_range 需要避开
             int junk_port = (
                 dport == 20    ||                  // FTP data
                 dport == 21    ||                  // FTP control
@@ -349,29 +431,61 @@ int xdp_prog_main(struct xdp_md *ctx)
             }
 
 #if defined(ENABLE_ARP_FILTER)
-            // ---- Step 1: Illegal SYN by frame length ----
-            // SYN=1, all other flags=0, but frame length outside [62, 604].
-            // Illegal pure SYN: SYN=1, all other flags=0, abnormal frame length.
-            // Legitimate SYN frames: Linux/Android ~74B, Windows ~66B, macOS ~74B,
-            // TFO cookie SYN ~589B. Floor 62B (4B tolerance below Windows min),
-            // ceiling 604B. Length check only applies to packets addressed to
-            // our own IPs (map_my_ip), IPv4 only — same scope as the original rules.
-            if (iph && tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
+            // ---- Step 1: Illegal SYN (doff + frame length, IPv4/IPv6) ----
+            // SYN=1, all other flags=0 — the only legit shapes are pure SYN and
+            // SYN+ACK, so this branch only sees pure-SYN candidates.
+            //
+            // doff < 6: every real OS carries at least the 4-byte MSS option in
+            // a handshake SYN (TCP header >= 24B, doff >= 6). A pure SYN with
+            // doff == 5 has no options at all = crafted packet (hping3, scapy,
+            // ZMap-style tools). This also catches payload-padded bare SYN
+            // floods (e.g. hping3 -S -d 100) that a frame-length lower bound
+            // would miss, since padding changes flen but not doff.
+            //
+            // flen > ceiling: SYN frames beyond the TFO-cookie size (~589B IPv4)
+            // have no legitimate reason to exist. Ceiling is 604 on IPv4 and
+            // 624 on IPv6 (fixed 40B v6 header vs 20B v4, +20 offset).
+            //
+            // doff < 6: unconditional — no dst check needed, the shape cannot
+            // exist in legitimate traffic regardless of destination.
+            // flen > ceiling: scoped to packets addressed to our own IPs
+            // (map_my_ip / map_my_ip6), same scope as the original rules.
+            if (tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
                 !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
             {
-                u16 flen = data_end - data;
 
-                if (flen < 62 || flen > 604)
+                // doff < 6: protocol violation, no map needed.
+                if (tcph_j->doff < 6)
                 {
-                    // Copy dst to stack for map lookup (same pattern as saddr
-                    // in junk_block_src — packet pointer as map key risks
-                    // verifier rejection on older kernels).
-                    u32 daddr_j;
-                    __builtin_memcpy(&daddr_j, &iph->daddr, sizeof(daddr_j));
+#if JUNK_FILTER_BLOCK_TIME > 0
+                    junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
 
-                    u8 *own = bpf_map_lookup_elem(&map_my_ip, &daddr_j);
+                // Oversized SYN: only for our own IPs.
+                u16 flen = data_end - data;
+                u16 ceil = iph ? 604 : 624;
 
-                    if (own)
+                if (flen > ceil)
+                {
+                    int is_own = 0;
+
+                    if (iph)
+                    {
+                        u32 daddr_j;
+                        __builtin_memcpy(&daddr_j, &iph->daddr, sizeof(daddr_j));
+                        is_own = (bpf_map_lookup_elem(&map_my_ip, &daddr_j) != NULL);
+                    }
+#if defined(ENABLE_NDP_FILTER) && defined(ENABLE_IPV6)
+                    else if (iph6)
+                    {
+                        is_own = (bpf_map_lookup_elem(&map_my_ip6, &dst_ip6) != NULL);
+                    }
+#endif
+
+                    if (is_own)
                     {
 #if JUNK_FILTER_BLOCK_TIME > 0
                         junk_block_src(iph, iph6, &src_ip6, now);
@@ -381,38 +495,23 @@ int xdp_prog_main(struct xdp_md *ctx)
                     }
                 }
             }
+#endif
 
-            // ---- Step 2: Illegal SYN flag combos to service ports ----
-            // Legitimate: pure SYN (ack=0) or SYN+ACK (ack=1), no other flags.
-            // Anything with SYN + FIN/RST/PSH/URG = scan probe, regardless of ACK.
-            if (iph && tcph_j->syn)
+            // ---- Step 2: Illegal SYN flag combos ----
+            // Legitimate SYN-bearing packets: pure SYN or SYN+ACK (plus
+            // ECN variants). SYN + FIN/RST/PSH/URG has no legal meaning on
+            // ANY port or destination — scan probe by definition.
+            // No dst-IP scoping needed: unlike the length check, this is a
+            // protocol violation, not a heuristic.
+            if (tcph_j->syn &&
+                (tcph_j->fin || tcph_j->rst || tcph_j->psh || tcph_j->urg))
             {
-                // 重点检测的端口，可以按需扩充
-                int is_service_port = (dport == 80) || (dport == 443) || (dport == 22);
-
-                if (is_service_port)
-                {
-                    int illegal_flags = tcph_j->fin || tcph_j->rst ||
-                                        tcph_j->psh || tcph_j->urg;
-
-                    if (illegal_flags)
-                    {
-                        u32 daddr_j;
-                        __builtin_memcpy(&daddr_j, &iph->daddr, sizeof(daddr_j));
-                        u8 *own = bpf_map_lookup_elem(&map_my_ip, &daddr_j);
-
-                        if (own)
-                        {
 #if JUNK_FILTER_BLOCK_TIME > 0
-                            junk_block_src(iph, iph6, &src_ip6, now);
+                junk_block_src(iph, iph6, &src_ip6, now);
 #endif
-                            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                            return XDP_DROP;
-                        }
-                    }
-                }
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
             }
-#endif
 
             // Step 3: NULL scan — all six flags clear is never valid TCP.
             // nmap -sN sends exactly this; no legit stack emits it.
@@ -440,6 +539,33 @@ int xdp_prog_main(struct xdp_md *ctx)
                 return XDP_DROP;
             }
 
+
+            // ---- Step 5a: FIN+RST simultaneously ----
+            // Mutually exclusive states (graceful close vs. abort); no real
+            // stack emits both. Classic scanner fingerprint (nmap variants).
+            if (tcph_j->fin && tcph_j->rst)
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // ---- Step 5b: CWR on handshake packets ----
+            // RFC 3168: CWR is only valid on data/ACK packets after ECN
+            // negotiation. SYN or SYN+ACK with CWR=1 is a protocol violation.
+            // NOTE: SYN+ACK with ECE=1 and CWR=0 is LEGITIMATE (ECN setup) —
+            // do not flag ECE alone.
+            if (tcph_j->cwr && tcph_j->syn)
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
         }
     }
 #endif
@@ -447,8 +573,15 @@ int xdp_prog_main(struct xdp_md *ctx)
 #ifdef ENABLE_UDP_JUNK_FILTER
     // Drop UDP junk: multicast/broadcast destinations or known junk ports.
     // Self-contained — does not depend on udph from ENABLE_FILTERS block.
-    if ((iph && iph->protocol == IPPROTO_UDP) ||
-        (iph6 && iph6->nexthdr == IPPROTO_UDP))
+
+    // Non-first fragments carry no UDP header — their payload would be
+    // misread as udphdr. Skip only the L4 checks; let the packet continue
+    // into ENABLE_FILTERS so IP-level stats and rules still apply.
+    // (First fragments offset==0 keep the header and are checked normally.)
+    int skip_l4 = (iph && (ntohs(iph->frag_off) & 0x1FFF));
+    if (!skip_l4 &&
+        ((iph && iph->protocol == IPPROTO_UDP) ||
+         (iph6 && iph6->nexthdr == IPPROTO_UDP)))
     {
         struct udphdr *udph_j = iph
             ? (void *)iph + (iph->ihl * 4)
@@ -456,10 +589,99 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         if (likely((void *)udph_j + sizeof(struct udphdr) <= data_end))
         {
+            // ---- Step A: UDP length field sanity ----
+            // udphdr.len = UDP header (8B) + payload; must equal the actual
+            // L3 payload length. Mismatch = crafted packet.
+            // Only checked on UNFRAGMENTED packets: on a first fragment,
+            // udph->len is the pre-fragmentation datagram size and is
+            // legitimately larger than this fragment's tot_len.
+            // (Non-first fragments already returned above.)
+            {
+                u16 udp_len = ntohs(udph_j->len);
+                u16 l3_len;
+                int frag = 0;
+
+                if (iph)
+                {
+                    // Malformed ihl/tot_len — drop before the u16
+                    // subtraction can underflow.
+                    if (iph->ihl < 5 ||
+                        ntohs(iph->tot_len) < (iph->ihl * 4))
+                    {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                        junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                        return XDP_DROP;
+                    }
+
+                    // MF flag (0x2000) or offset (0x1FFF) set = fragmented.
+                    frag = (ntohs(iph->frag_off) & 0x3FFF) != 0;
+
+                    // IPv4: total_length - ihl*4 = L4 segment size.
+                    l3_len = ntohs(iph->tot_len) - (iph->ihl * 4);
+                }
+#ifdef ENABLE_IPV6
+                else if (iph6)
+                {
+                    // IPv6: payload_length covers the L4 segment directly.
+                    // (Fragmented v6 packets have nexthdr=44 and never
+                    // reach this block, so no frag check needed here.)
+                    l3_len = ntohs(iph6->payload_len);
+                }
+#endif
+                // Legit cases that must NOT be dropped:
+                //   udp_len < 8        — malformed, always drop
+                //   udp_len > l3_len   — only meaningful when unfragmented
+                //   udp_len < l3_len   — padding (Etherpad min frame), legal
+                if (udp_len < 8 || (!frag && udp_len > l3_len))
+                {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                    junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
+            }
+
             // Multicast/broadcast short-circuits first; only non-multicast
             // packets reach the port checks.
             u16 dport = ntohs(udph_j->dest);
+            u16 sport = ntohs(udph_j->source);
 
+            // ---- Step B: port 0 is never valid ----
+            // IANA reserves port 0; no legitimate socket binds to or sends
+            // to port 0. Both directions checked cheaply.
+            if (dport == 0 || sport == 0)
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // ---- Step C: UDP checksum mandatory on IPv6 (RFC 2460 §8.1) ----
+            // check == 0 means "no checksum" — legal on IPv4, a protocol
+            // violation on IPv6. Tunnels that legitimately use zero-checksum
+            // UDP on v6 (VXLAN etc.) are encapsulated, not seen here.
+            if (iph6 && udph_j->check == 0
+                // maybe needed somehow ?
+                // &&
+                // dport != 4789 &&   // VXLAN
+                // dport != 6081)     // GENEVE
+                )
+            {
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // junk port check
+            // 注意本机 net.ipv4.ip_local_port_range 需要避开
             int junk_port = (
                 dport == 3418  ||                  // IoT M2M
 
@@ -584,7 +806,12 @@ int xdp_prog_main(struct xdp_md *ctx)
 
     u8 protocol = 0;
 
-    if (iph)
+    // Do not parse L4 on non-first fragments — payload would be misread
+    // as TCP/UDP/ICMP headers. tcph/udph/icmph stay NULL; rules that
+    // require L4 fields simply won't match, IP-level rules still apply.
+    int is_nonfirst_frag = (iph && (ntohs(iph->frag_off) & 0x1FFF));
+
+    if (iph && !is_nonfirst_frag)
     {
         protocol = iph->protocol;
 

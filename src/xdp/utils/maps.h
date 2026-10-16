@@ -13,6 +13,14 @@ struct
     __type(value, stats_t);
 } map_stats SEC(".maps");
 
+struct
+{
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, MAX_ALLOW);
+    __type(key, allow_key4_t);
+    __type(value, u64);
+} map_allow SEC(".maps");
+
 #ifdef ENABLE_ARP_FILTER
 struct
 {
@@ -21,6 +29,25 @@ struct
     __type(key, u32);
     __type(value, u32);
 } map_arp_enabled SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_MY_IPS);
+    __type(key, u32);
+    __type(value, u8);
+} map_my_ip SEC(".maps");
+#endif
+
+#ifdef ENABLE_IPV6
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, MAX_ALLOW);
+    __type(key, allow_key6_t);
+    __type(value, u64);
+} map_allow6 SEC(".maps");
 
 #ifdef ENABLE_NDP_FILTER
 struct
@@ -34,37 +61,12 @@ struct
 struct
 {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, MAX_MY_IPS);
-    __type(key, u32);
-    __type(value, u32);
-} map_my_ip SEC(".maps");
-#endif
-
-struct
-{
-    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, MAX_MY_IP6S);
     __type(key, u128);
     __type(value, u8);
 } map_my_ip6 SEC(".maps");
 #endif
 
-struct
-{
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, MAX_ALLOW);
-    __type(key, allow_key4_t);
-    __type(value, u64);
-} map_allow SEC(".maps");
-
-#ifdef ENABLE_IPV6
-struct
-{
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, MAX_ALLOW);
-    __type(key, allow_key6_t);
-    __type(value, u64);
-} map_allow6 SEC(".maps");
 #endif
 
 struct
@@ -105,6 +107,7 @@ struct
     __type(key, u32);
     __type(value, cl_stats_t);
 } map_ip_stats SEC(".maps");
+#endif
 
 #ifdef ENABLE_IPV6
 struct
