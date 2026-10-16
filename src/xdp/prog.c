@@ -226,32 +226,151 @@ int xdp_prog_main(struct xdp_md *ctx)
     }
 #endif
 
+// Do not parse L4 on non-first fragments — payload would be misread
+// as TCP/UDP/ICMP headers. tcph/udph/icmph stay NULL; rules that
+// require L4 fields simply won't match, IP-level rules still apply.
+int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
+
+#ifdef ENABLE_ARP_FILTER
+    // IPv4 ICMP pre-filter (reuses map_arp_enabled and map_my_ip from ENABLE_ARP_FILTER):
+    // 1. Ensures ICMP packet is actually addressed to our own IP (drops Smurf broadcast/multicast & neighbor noise).
+    // 2. Drops 100% invalid, deprecated (RFC 6633 / RFC 6918), or scanner-probe ICMPv4 packets targeting us.
+    if (iph && iph->protocol == IPPROTO_ICMP)
+    {
+        u8 s_msb = *((u8 *)&iph->saddr);
+        u8 d_msb = *((u8 *)&iph->daddr);
+
+        // ---- Step 1: L3 bogon source, LAND attack, or multicast/broadcast destination (Smurf) ----
+        if (unlikely(s_msb >= 0xE0 || iph->saddr == 0 ||
+                     iph->saddr == iph->daddr ||
+                     (d_msb >= 0xE0 && d_msb <= 0xEF) ||
+                     iph->daddr == 0xFFFFFFFF))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
+        // ---- Step 2: Destination IP must be ours (when my_ips is configured) ----
+        u32 zero = 0;
+        u32 *arp_enabled = bpf_map_lookup_elem(&map_arp_enabled, &zero);
+
+        if (arp_enabled && *arp_enabled)
+        {
+            u32 daddr_icmp;
+            __builtin_memcpy(&daddr_icmp, &iph->daddr, sizeof(daddr_icmp));
+
+            u8 *found = bpf_map_lookup_elem(&map_my_ip, &daddr_icmp);
+            if (!found)
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+        }
+
+        // ---- Step 3: L4 ICMPv4 header & payload sanity (on first/unfragmented packet) ----
+        if (!is_nonfirst_frag)
+        {
+            struct icmphdr *icmph_j = (void *)iph + (iph->ihl * 4);
+
+            // Truncated ICMP header (< 8B) is always malformed.
+            if (unlikely((void *)icmph_j + sizeof(struct icmphdr) > data_end))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            u8 type = icmph_j->type;
+            u8 code = icmph_j->code;
+
+            // Strict RFC whitelist for ICMPv4 types & codes on a server:
+            //   - Type 0  (Echo Reply):              code MUST be 0 (non-zero = OS fingerprint probe)
+            //   - Type 8  (Echo Request):            code MUST be 0 (non-zero = Nmap/Sing OS probe)
+            //   - Type 3  (Dest Unreachable/PMTUD):  code 0..15
+            //   - Type 11 (Time Exceeded):           code 0..1
+            //   - Type 12 (Parameter Problem):       code 0..2
+            // All other types — including Timestamp (13/14, nmap -PP), Info (15/16),
+            // Address Mask (17/18, nmap -PM), Redirect (5), Source Quench (4),
+            // Router Discovery (9/10) — are 100% probes or RFC-deprecated.
+            int valid_icmp4 =
+                ((type == 0 || type == 8) && code == 0) ||
+                (type == 3  && code <= 15) ||
+                (type == 11 && code <= 1)  ||
+                (type == 12 && code <= 2);
+
+            if (unlikely(!valid_icmp4))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // For ICMPv4 Error messages (Type 3, 11, 12):
+            // 1. RFC 792 requires at least 8B icmphdr + 20B offending iphdr + 8B L4 = 36B.
+            //    Anything shorter (< 36B) is a crafted scanner packet (e.g. hping3 --icmp -C 3).
+            // 2. ICMP Error messages are small (< 576B) and never legitimately IP-fragmented (MF=1).
+            if (type == 3 || type == 11 || type == 12)
+            {
+                if (unlikely((void *)icmph_j + 36 > data_end ||
+                             (iph->frag_off & htons(0x2000))))
+                {
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
+            }
+        }
+    }
+#endif
+
 #ifdef ENABLE_NDP_FILTER
+    // IPv6 ICMPv6 & NDP pre-filter (reuses map_ndp_enabled and map_my_ip6):
     if (iph6 && iph6->nexthdr == IPPROTO_ICMPV6)
     {
         struct icmp6hdr *icmp6_hdr = (void *)iph6 + sizeof(struct ipv6hdr);
 
-        // Check ICMPv6 header (8B) — enough to read type.
-        if (likely((void *)icmp6_hdr + sizeof(struct icmp6hdr) <= data_end))
+        // Truncated ICMPv6 header (< 8B) or LAND attack (src == dst) or multicast source (ff00::/8).
+        if (unlikely((void *)icmp6_hdr + sizeof(struct icmp6hdr) > data_end ||
+                     iph6->saddr.in6_u.u6_addr8[0] == 0xff ||
+                     (__builtin_memcmp(&src_ip6, &dst_ip6, sizeof(src_ip6)) == 0)))
         {
-            u8 type = icmp6_hdr->icmp6_type;
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
 
-            // 133 = RS, 137 = Redirect, 130/131/132 = MLD, 143 = MLDv2,
-            // 138 = Router Renumbering, 139 = Node Information Query.
-            if (type == 133 || type == 137 ||
-                type == 130 || type == 131 || type == 132 ||
-                type == 143 || type == 138 || type == 139)
+        u8 type = icmp6_hdr->icmp6_type;
+        u8 code = icmp6_hdr->icmp6_code;
+
+        // ---- Case A: NDP & Router Discovery (Types 134 RA, 135 NS, 136 NA) ----
+        // Note: RS (133) and Redirect (137) are intentionally NOT in this list and will be dropped.
+        if (type == 134 || type == 135 || type == 136)
+        {
+            // RFC 4861 §6.1.2 / §7.1.1 / §7.1.2:
+            // All legitimate on-link NDP packets MUST have hop_limit == 255 and code == 0.
+            // Any packet with hop_limit != 255 is an off-link spoofed NDP/RA attack!
+            if (unlikely(iph6->hop_limit != 255 || code != 0))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-
                 return XDP_DROP;
             }
 
-            // NS (135) / NA (136): whitelist by target address.
-            // Need additional 16B for target address beyond the 8B ICMPv6 header.
-            if ((type == 135 || type == 136) &&
-                likely((void *)icmp6_hdr + 24 <= data_end))
+            // RA (134): RFC 4861 §6.1.2 mandates source address MUST be link-local (fe80::/10).
+            if (type == 134)
             {
+                u8 s0 = iph6->saddr.in6_u.u6_addr8[0];
+                u8 s1 = iph6->saddr.in6_u.u6_addr8[1];
+                if (unlikely(s0 != 0xfe || (s1 & 0xc0) != 0x80))
+                {
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
+            }
+            // NS (135) / NA (136): must carry 16B target address (total >= 24B) matching map_my_ip6.
+            else
+            {
+                if (unlikely((void *)icmp6_hdr + 24 > data_end))
+                {
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
+
                 u32 zero = 0;
                 u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
 
@@ -261,24 +380,81 @@ int xdp_prog_main(struct xdp_md *ctx)
                     __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
 
                     u8 *found = bpf_map_lookup_elem(&map_my_ip6, &ndp_target);
-
                     if (!found)
                     {
                         inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-
                         return XDP_DROP;
                     }
                 }
             }
         }
+        // ---- Case B: Non-NDP ICMPv6 (Errors 1..4 and Echo 128/129) ----
+        else
+        {
+            // Strict RFC 4443 / RFC 4890 whitelist for non-NDP ICMPv6:
+            //   - Type 1   (Dest Unreachable):   code 0..6
+            //   - Type 2   (Packet Too Big):     code MUST be 0 (PMTUD)
+            //   - Type 3   (Time Exceeded):      code 0..1
+            //   - Type 4   (Parameter Problem):  code 0..2
+            //   - Type 128 (Echo Request):       code MUST be 0
+            //   - Type 129 (Echo Reply):         code MUST be 0
+            // Everything else (130-133 MLD/RS, 137 Redirect, 138 Router Renumbering,
+            // 139/140 Node Info Query/Reply, 143 MLDv2, 144-153 Mobile/MRD, etc.) is dropped.
+            int valid_icmp6 =
+                ((type == 128 || type == 129 || type == 2) && code == 0) ||
+                (type == 1 && code <= 6) ||
+                (type == 3 && code <= 1) ||
+                (type == 4 && code <= 2);
+
+            if (unlikely(!valid_icmp6))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // Drop multicast destination (ff00::/8) on Echo/Error messages (e.g. ff02::1 ping sweep).
+            if (unlikely(iph6->daddr.in6_u.u6_addr8[0] == 0xff))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // Ensure destination IPv6 is ours (or link-local fe80::/10 in case only global IPv6 is in my_ip6s).
+            u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
+            u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
+            int is_link_local_dst = (d0 == 0xfe && (d1 & 0xc0) == 0x80);
+
+            if (!is_link_local_dst)
+            {
+                u32 zero = 0;
+                u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+
+                if (ndp_enabled && *ndp_enabled)
+                {
+                    u8 *found = bpf_map_lookup_elem(&map_my_ip6, &dst_ip6);
+                    if (!found)
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                        return XDP_DROP;
+                    }
+                }
+            }
+
+            // RFC 4443: ICMPv6 Error messages (Type 1..4) must include at least the
+            // 8B icmp6hdr + 40B offending ipv6hdr + 8B L4 = 56B total.
+            // if (type <= 4 && unlikely((void *)icmp6_hdr + 56 > data_end))
+
+            // RFC 4443: error must embed at least the full 40B invoking IPv6 header.
+            // 8B icmp6hdr + 40B = 48B minimum. (8B of L4 beyond that is customary
+            // but not strictly required — don't enforce it.)
+            if (type <= 4 && unlikely((void *)icmp6_hdr + 48 > data_end))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+        }
     }
 #endif
-
-
-// Do not parse L4 on non-first fragments — payload would be misread
-// as TCP/UDP/ICMP headers. tcph/udph/icmph stay NULL; rules that
-// require L4 fields simply won't match, IP-level rules still apply.
-int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
 
 #ifdef ENABLE_TCP_JUNK_FILTER
     // Drop TCP junk: multicast/broadcast destinations or known junk ports.
