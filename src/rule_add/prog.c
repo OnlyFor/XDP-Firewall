@@ -470,10 +470,11 @@ int main(int argc, char *argv[])
 
             u128 ip = 0;
 
-            for (int i = 0; i < 16; i++)
-            {
-                ip = (ip << 8) | addr.s6_addr[i];
-            }
+            // for (int i = 0; i < 16; i++)
+            // {
+            //     ip = (ip << 8) | addr.s6_addr[i];
+            // }
+            memcpy(&ip, addr.s6_addr, sizeof(ip));
 
             if ((ret = add_block6(map_block6, ip, expires_rel)) != 0)
             {

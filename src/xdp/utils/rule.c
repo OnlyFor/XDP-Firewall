@@ -118,13 +118,25 @@ static __always_inline long process_rule(u32 idx, void* data)
     else if (ctx->iph6)
     {
         // Source address.
-        if (filter->ip.src_ip6[0] != 0 && (ctx->iph6->saddr.in6_u.u6_addr32[0] != filter->ip.src_ip6[0] || ctx->iph6->saddr.in6_u.u6_addr32[1] != filter->ip.src_ip6[1] || ctx->iph6->saddr.in6_u.u6_addr32[2] != filter->ip.src_ip6[2] || ctx->iph6->saddr.in6_u.u6_addr32[3] != filter->ip.src_ip6[3]))
+        // if (filter->ip.src_ip6[0] != 0 && (ctx->iph6->saddr.in6_u.u6_addr32[0] != filter->ip.src_ip6[0] || ctx->iph6->saddr.in6_u.u6_addr32[1] != filter->ip.src_ip6[1] || ctx->iph6->saddr.in6_u.u6_addr32[2] != filter->ip.src_ip6[2] || ctx->iph6->saddr.in6_u.u6_addr32[3] != filter->ip.src_ip6[3]))
+        if ((filter->ip.src_ip6[0] != 0 || filter->ip.src_ip6[1] != 0 ||
+                filter->ip.src_ip6[2] != 0 || filter->ip.src_ip6[3] != 0) &&
+            (ctx->iph6->saddr.in6_u.u6_addr32[0] != filter->ip.src_ip6[0] ||
+                ctx->iph6->saddr.in6_u.u6_addr32[1] != filter->ip.src_ip6[1] ||
+                ctx->iph6->saddr.in6_u.u6_addr32[2] != filter->ip.src_ip6[2] ||
+                ctx->iph6->saddr.in6_u.u6_addr32[3] != filter->ip.src_ip6[3]))
         {
             return 0;
         }
 
         // Destination address.
-        if (filter->ip.dst_ip6[0] != 0 && (ctx->iph6->daddr.in6_u.u6_addr32[0] != filter->ip.dst_ip6[0] || ctx->iph6->daddr.in6_u.u6_addr32[1] != filter->ip.dst_ip6[1] || ctx->iph6->daddr.in6_u.u6_addr32[2] != filter->ip.dst_ip6[2] || ctx->iph6->daddr.in6_u.u6_addr32[3] != filter->ip.dst_ip6[3]))
+        // if (filter->ip.dst_ip6[0] != 0 && (ctx->iph6->daddr.in6_u.u6_addr32[0] != filter->ip.dst_ip6[0] || ctx->iph6->daddr.in6_u.u6_addr32[1] != filter->ip.dst_ip6[1] || ctx->iph6->daddr.in6_u.u6_addr32[2] != filter->ip.dst_ip6[2] || ctx->iph6->daddr.in6_u.u6_addr32[3] != filter->ip.dst_ip6[3]))
+        if ((filter->ip.dst_ip6[0] != 0 || filter->ip.dst_ip6[1] != 0 ||
+                filter->ip.dst_ip6[2] != 0 || filter->ip.dst_ip6[3] != 0) &&
+            (ctx->iph6->daddr.in6_u.u6_addr32[0] != filter->ip.dst_ip6[0] ||
+                ctx->iph6->daddr.in6_u.u6_addr32[1] != filter->ip.dst_ip6[1] ||
+                ctx->iph6->daddr.in6_u.u6_addr32[2] != filter->ip.dst_ip6[2] ||
+                ctx->iph6->daddr.in6_u.u6_addr32[3] != filter->ip.dst_ip6[3]))
         {
             return 0;
         }

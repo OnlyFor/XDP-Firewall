@@ -904,6 +904,48 @@ int save_cfg(config__t* cfg, const char* file_path)
     setting = config_setting_add(root, "stdout_update_time", CONFIG_TYPE_INT);
     config_setting_set_int(setting, cfg->stdout_update_time);
 
+    // Add my IPs (local addresses — ARP/NDP whitelist source).
+    config_setting_t* my_ips = config_setting_add(root, "my_ips", CONFIG_TYPE_LIST);
+
+    if (my_ips)
+    {
+        for (int i = 0; i < MAX_MY_IPS; i++)   // 用你实际的数组上限常量
+        {
+            const char* ip = cfg->my_ips[i];
+
+            if (ip)
+            {
+                config_setting_t* elem = config_setting_add(my_ips, NULL, CONFIG_TYPE_STRING);
+
+                if (elem)
+                {
+                    config_setting_set_string(elem, ip);
+                }
+            }
+        }
+    }
+
+    // Add my IPv6s.
+    config_setting_t* my_ip6s = config_setting_add(root, "my_ip6s", CONFIG_TYPE_LIST);
+
+    if (my_ip6s)
+    {
+        for (int i = 0; i < MAX_MY_IP6S; i++)
+        {
+            const char* ip6 = cfg->my_ip6s[i];
+
+            if (ip6)
+            {
+                config_setting_t* elem = config_setting_add(my_ip6s, NULL, CONFIG_TYPE_STRING);
+
+                if (elem)
+                {
+                    config_setting_set_string(elem, ip6);
+                }
+            }
+        }
+    }
+
     // Add filters.
     config_setting_t* filters = config_setting_add(root, "filters", CONFIG_TYPE_LIST);
 
@@ -948,6 +990,12 @@ int save_cfg(config__t* cfg, const char* file_path)
                 {
                     config_setting_t* block_time = config_setting_add(filter_cfg, "block_time", CONFIG_TYPE_INT);
                     config_setting_set_int(block_time, filter->block_time);
+                }
+                // Add block time.
+                if (filter->allow_time > 0)
+                {
+                    config_setting_t* allow_time = config_setting_add(filter_cfg, "allow_time", CONFIG_TYPE_INT);
+                    config_setting_set_int(allow_time, filter->allow_time);
                 }
 
                 // Add IP PPS.

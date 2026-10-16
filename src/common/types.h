@@ -154,6 +154,7 @@ struct flow
     u32 ip;
     u16 port;
     u8 protocol;
+    u8 _pad;
 } typedef flow_t;
 
 struct flow6
@@ -161,6 +162,7 @@ struct flow6
     u128 ip;
     u16 port;
     u8 protocol;
+    u8   _pad[13];
 } typedef flow6_t;
 
 struct filter_log_event
@@ -202,6 +204,7 @@ struct allow_key4
     u16 src_port;
     u16 dst_port;
     u8  protocol;
+    u8  _pad[3];
 } typedef allow_key4_t;
 
 #ifdef ENABLE_IPV6
@@ -212,5 +215,6 @@ struct allow_key6
     u16 src_port;
     u16 dst_port;
     u8  protocol;
+    u8  _pad[11];
 } typedef allow_key6_t;
 #endif

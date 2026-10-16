@@ -50,8 +50,8 @@ static __always_inline int log_filter_msg(struct iphdr* iph, struct ipv6hdr* iph
 #ifdef ENABLE_IPV6
         else if (iph6)
         {
-            memcpy(&e->src_ip6, iph6->saddr.in6_u.u6_addr32, 4);
-            memcpy(&e->dst_ip6, iph6->daddr.in6_u.u6_addr32, 4);
+            memcpy(&e->src_ip6, iph6->saddr.in6_u.u6_addr32, sizeof(e->src_ip6));
+            memcpy(&e->dst_ip6, iph6->daddr.in6_u.u6_addr32, sizeof(e->dst_ip6));
             // 清零 IPv4 字段
             e->src_ip = 0;
             e->dst_ip = 0;

@@ -132,6 +132,18 @@ int xdp_prog_main(struct xdp_md *ctx)
 
             return XDP_DROP;
         }
+
+        // IPv4 header sanity: ihl < 5 or tot_len < ihl*4 is malformed.
+        // This guards ALL downstream L4 parsing — without it, ihl=15 on a
+        // 50B packet makes tcph_j/udph_j point into garbage, and u16
+        // subtraction in UDP Step A can underflow.  saddr is unreliable
+        // on malformed packets, so do NOT block source.
+        if (iph->ihl < 5 || ntohs(iph->tot_len) < (iph->ihl * 4))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
     }
 #ifdef ENABLE_IPV6
     else
@@ -262,6 +274,12 @@ int xdp_prog_main(struct xdp_md *ctx)
     }
 #endif
 
+
+// Do not parse L4 on non-first fragments — payload would be misread
+// as TCP/UDP/ICMP headers. tcph/udph/icmph stay NULL; rules that
+// require L4 fields simply won't match, IP-level rules still apply.
+int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
+
 #ifdef ENABLE_TCP_JUNK_FILTER
     // Drop TCP junk: multicast/broadcast destinations or known junk ports.
     // Self-contained — does not depend on tcph from ENABLE_FILTERS block.
@@ -271,8 +289,7 @@ int xdp_prog_main(struct xdp_md *ctx)
     // misread as udphdr. Skip only the L4 checks; let the packet continue
     // into ENABLE_FILTERS so IP-level stats and rules still apply.
     // (First fragments offset==0 keep the header and are checked normally.)
-    int skip_l4 = (iph && (ntohs(iph->frag_off) & 0x1FFF));
-    if (!skip_l4 &&
+    if (!is_nonfirst_frag &&
         ((iph && iph->protocol == IPPROTO_TCP) ||
          (iph6 && iph6->nexthdr == IPPROTO_TCP)))
     {
@@ -282,21 +299,6 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         if (likely((void *)tcph_j + sizeof(struct tcphdr) <= data_end))
         {
-
-            // ---- Step 0a: IPv4 header sanity (ihl / tot_len) ----
-            // ihl < 5 is a protocol violation and makes tcph_j point back
-            // into the IP header — every later L4 check would read garbage.
-            // tot_len < ihl*4 underflows u16 subtraction; both = malformed.
-            if (iph && (iph->ihl < 5 ||
-                        ntohs(iph->tot_len) < (iph->ihl * 4)))
-            {
-// src 不可信
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//                 junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
 
             // ---- Step 0b: LAND attack — src == dst on external NIC ----
             // No legitimate packet received from an external interface has
@@ -348,6 +350,22 @@ int xdp_prog_main(struct xdp_md *ctx)
                 (ntohs(iph->frag_off) & 0x2000))
             {
 // src 不可信
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//                 junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // ---- Step 0e: TCP header length sanity ----
+            // doff < 5 = header shorter than the 20B minimum — impossible
+            // for a real stack, on ANY packet type (SYN/ACK/RST/etc).
+            // doff*4 beyond data_end = header length field claims more bytes
+            // than the packet actually carries — crafted.
+            // Global: no map lookups, no IP-version dependency.
+            if (tcph_j->doff < 5 ||
+                (void *)tcph_j + (tcph_j->doff * 4) > data_end)
+            {
 // #if JUNK_FILTER_BLOCK_TIME > 0
 //                 junk_block_src(iph, iph6, &src_ip6, now);
 // #endif
@@ -430,7 +448,6 @@ int xdp_prog_main(struct xdp_md *ctx)
                 return XDP_DROP;
             }
 
-#if defined(ENABLE_ARP_FILTER)
             // ---- Step 1: Illegal SYN (doff + frame length, IPv4/IPv6) ----
             // SYN=1, all other flags=0 — the only legit shapes are pure SYN and
             // SYN+ACK, so this branch only sees pure-SYN candidates.
@@ -448,8 +465,11 @@ int xdp_prog_main(struct xdp_md *ctx)
             //
             // doff < 6: unconditional — no dst check needed, the shape cannot
             // exist in legitimate traffic regardless of destination.
-            // flen > ceiling: scoped to packets addressed to our own IPs
-            // (map_my_ip / map_my_ip6), same scope as the original rules.
+
+            // doff < 6 and flen > ceiling: both unconditional — neither
+            // shape can exist in legitimate traffic regardless of destination,
+            // so no dst check (map_my_ip) is needed. This also removes the
+            // ENABLE_ARP_FILTER / ENABLE_NDP_FILTER dependency entirely.
             if (tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
                 !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
             {
@@ -470,32 +490,13 @@ int xdp_prog_main(struct xdp_md *ctx)
 
                 if (flen > ceil)
                 {
-                    int is_own = 0;
-
-                    if (iph)
-                    {
-                        u32 daddr_j;
-                        __builtin_memcpy(&daddr_j, &iph->daddr, sizeof(daddr_j));
-                        is_own = (bpf_map_lookup_elem(&map_my_ip, &daddr_j) != NULL);
-                    }
-#if defined(ENABLE_NDP_FILTER) && defined(ENABLE_IPV6)
-                    else if (iph6)
-                    {
-                        is_own = (bpf_map_lookup_elem(&map_my_ip6, &dst_ip6) != NULL);
-                    }
-#endif
-
-                    if (is_own)
-                    {
 #if JUNK_FILTER_BLOCK_TIME > 0
-                        junk_block_src(iph, iph6, &src_ip6, now);
+                    junk_block_src(iph, iph6, &src_ip6, now);
 #endif
-                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                        return XDP_DROP;
-                    }
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
                 }
             }
-#endif
 
             // ---- Step 2: Illegal SYN flag combos ----
             // Legitimate SYN-bearing packets: pure SYN or SYN+ACK (plus
@@ -553,11 +554,15 @@ int xdp_prog_main(struct xdp_md *ctx)
             }
 
             // ---- Step 5b: CWR on handshake packets ----
-            // RFC 3168: CWR is only valid on data/ACK packets after ECN
-            // negotiation. SYN or SYN+ACK with CWR=1 is a protocol violation.
-            // NOTE: SYN+ACK with ECE=1 and CWR=0 is LEGITIMATE (ECN setup) —
-            // do not flag ECE alone.
-            if (tcph_j->cwr && tcph_j->syn)
+            // Per RFC 3168 §6.1.1, ECN negotiation legitimately sets
+            // ECE=1 AND CWR=1 on the client's pure SYN (syn=1,ack=0) —
+            // macOS/iOS and Linux (net.ipv4.tcp_ecn=1) all do this.
+            // CWR is illegal only in two handshake shapes:
+            //   1. SYN+ACK with CWR=1  (server must never set CWR here);
+            //   2. Pure SYN with CWR=1 but ECE=0  (CWR without the ECE
+            //      negotiation context is a crafted flag combo).
+            // Combined condition: syn && cwr && (ack || !ece).
+            if (tcph_j->syn && tcph_j->cwr && (tcph_j->ack || !tcph_j->ece))
             {
 #if JUNK_FILTER_BLOCK_TIME > 0
                 junk_block_src(iph, iph6, &src_ip6, now);
@@ -578,8 +583,7 @@ int xdp_prog_main(struct xdp_md *ctx)
     // misread as udphdr. Skip only the L4 checks; let the packet continue
     // into ENABLE_FILTERS so IP-level stats and rules still apply.
     // (First fragments offset==0 keep the header and are checked normally.)
-    int skip_l4 = (iph && (ntohs(iph->frag_off) & 0x1FFF));
-    if (!skip_l4 &&
+    if (!is_nonfirst_frag &&
         ((iph && iph->protocol == IPPROTO_UDP) ||
          (iph6 && iph6->nexthdr == IPPROTO_UDP)))
     {
@@ -598,24 +602,11 @@ int xdp_prog_main(struct xdp_md *ctx)
             // (Non-first fragments already returned above.)
             {
                 u16 udp_len = ntohs(udph_j->len);
-                u16 l3_len;
+                u16 l3_len = 0;
                 int frag = 0;
 
                 if (iph)
                 {
-                    // Malformed ihl/tot_len — drop before the u16
-                    // subtraction can underflow.
-                    if (iph->ihl < 5 ||
-                        ntohs(iph->tot_len) < (iph->ihl * 4))
-                    {
-#if JUNK_FILTER_BLOCK_TIME > 0
-                        junk_block_src(iph, iph6, &src_ip6, now);
-#endif
-
-                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                        return XDP_DROP;
-                    }
-
                     // MF flag (0x2000) or offset (0x1FFF) set = fragmented.
                     frag = (ntohs(iph->frag_off) & 0x3FFF) != 0;
 
@@ -806,14 +797,12 @@ int xdp_prog_main(struct xdp_md *ctx)
 
     u8 protocol = 0;
 
-    // Do not parse L4 on non-first fragments — payload would be misread
-    // as TCP/UDP/ICMP headers. tcph/udph/icmph stay NULL; rules that
-    // require L4 fields simply won't match, IP-level rules still apply.
-    int is_nonfirst_frag = (iph && (ntohs(iph->frag_off) & 0x1FFF));
+if (iph)
+{
+    protocol = iph->protocol;
 
-    if (iph && !is_nonfirst_frag)
+    if (!is_nonfirst_frag)
     {
-        protocol = iph->protocol;
 
         switch (iph->protocol)
         {
@@ -872,6 +861,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 break;
         }
     }
+}
 #ifdef ENABLE_IPV6
     else if (iph6)
     {
@@ -1221,10 +1211,10 @@ matched:
 
                         bpf_map_update_elem(&map_allow6, &akey6, &expire, BPF_ANY);
                     }
+#endif
                 }
             }
         }
-#endif
 
         inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
     }

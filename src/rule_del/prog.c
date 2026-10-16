@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
 
     // Load config.
     config__t cfg = {0};
-    
+
     if (cli.save || cli.mode == 0)
     {
         if ((ret = load_cfg(&cfg, cli.cfg_file, 1, NULL)) != 0)
@@ -231,10 +231,11 @@ int main(int argc, char *argv[])
 
             u128 ip = 0;
 
-            for (int i = 0; i < 16; i++)
-            {
-                ip = (ip << 8) | addr.s6_addr[i];
-            }
+            // for (int i = 0; i < 16; i++)
+            // {
+            //     ip = (ip << 8) | addr.s6_addr[i];
+            // }
+            memcpy(&ip, addr.s6_addr, sizeof(ip));
 
             if ((ret = delete_block6(map_block6, ip)) != 0)
             {

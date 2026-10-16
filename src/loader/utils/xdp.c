@@ -203,7 +203,14 @@ int attach_xdp(struct xdp_program *prog, char** mode, int ifidx, int detach, int
  */
 int delete_filter(int map_filters, u32 idx)
 {
-    return bpf_map_delete_elem(map_filters, &idx);
+    // return bpf_map_delete_elem(map_filters, &idx);
+
+    // ARRAY/PERCPU_ARRAY maps don't support delete — write a zeroed entry
+    // instead so filter->set == 0, which terminates process_rule's loop.
+    filter_t filter_cpus[MAX_CPUS];
+    memset(filter_cpus, 0, sizeof(filter_cpus));
+
+    return bpf_map_update_elem(map_filters, &idx, filter_cpus, BPF_ANY);
 }
 
 /**
@@ -330,7 +337,7 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
 
         inet_pton(AF_INET6, filter_cfg->ip.dst_ip6, &in);
 
-        memcpy(filter.ip.src_ip6, in.__in6_u.__u6_addr32, sizeof(in.__in6_u.__u6_addr32));
+        memcpy(filter.ip.dst_ip6, in.__in6_u.__u6_addr32, sizeof(in.__in6_u.__u6_addr32));
     }
 #endif
 
@@ -547,6 +554,14 @@ void update_filters(int map_filters, config__t *cfg)
 
         cur_idx++;
     }
+
+    // Zero the first slot past the last rule — kills stale entries left
+    // behind when the rule count shrinks on reload / xdpfw-del.
+    // process_rule breaks at the first !set filter, so one slot suffices.
+    if (cur_idx < MAX_FILTERS)
+    {
+        delete_filter(map_filters, cur_idx);
+    }
 }
 
 /**
@@ -678,7 +693,8 @@ int add_block6(int map_block6, u128 ip, u64 expires)
  */
 int delete_range_drop(int map_range_drop, u32 net, u8 cidr)
 {
-    u32 bit_mask = htonl(( ~( (1 << (32 - cidr) ) - 1) ));
+    // u32 bit_mask = htonl(( ~( (1 << (32 - cidr) ) - 1) ));
+    u32 bit_mask = (cidr == 0) ? 0 : htonl(0xFFFFFFFFu << (32 - cidr));
     u32 start = net & bit_mask;
 
     lpm_trie_key_t key = {0};
@@ -699,7 +715,8 @@ int delete_range_drop(int map_range_drop, u32 net, u8 cidr)
  */
 int add_range_drop(int map_range_drop, u32 net, u8 cidr)
 {
-    u32 bit_mask = htonl(( ~( (1 << (32 - cidr) ) - 1) ));
+    // u32 bit_mask = htonl(( ~( (1 << (32 - cidr) ) - 1) ));
+    u32 bit_mask = (cidr == 0) ? 0 : htonl(0xFFFFFFFFu << (32 - cidr));
     u32 start = net & bit_mask;
 
     lpm_trie_key_t key = {0};
