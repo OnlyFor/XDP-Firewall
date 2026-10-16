@@ -443,25 +443,31 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
             // Action (required).
             int action;
+            int has_action = 0;
 
             if (config_setting_lookup_int(filter_cfg, "action", &action) == CONFIG_TRUE)
             {
                 filter->action = action;
+                has_action = 1;
             }
 
             // Block time (default 1).
             int block_time;
+            int has_block_time = 0;
 
             if (config_setting_lookup_int(filter_cfg, "block_time", &block_time) == CONFIG_TRUE)
             {
                 filter->block_time = block_time;
+                has_block_time = 1;
             }
 
             int allow_time;
+            int has_allow_time = 0;
 
             if (config_setting_lookup_int(filter_cfg, "allow_time", &allow_time) == CONFIG_TRUE)
             {
                 filter->allow_time = allow_time;
+                has_allow_time = 1;
             }
 
             // IP PPS (not required).
@@ -786,6 +792,28 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
             if (config_setting_lookup_int(filter_cfg, "icmp_type", &icmp_type) == CONFIG_TRUE)
             {
                 filter->icmp.type = icmp_type;
+            }
+
+            // Mutual exclusion: block_time belongs to action=0, allow_time to action=1.
+            // Use has_* flags — value checks can't distinguish "explicitly set" from default.
+            int action_is_block = has_action ? (filter->action == 0) : 1;   // 默认 action 按你的 set_filter_defaults 来
+            int action_is_allow = has_action ? (filter->action == 1) : 0;   // 默认 action 按你的 set_filter_defaults 来
+
+            // Both set: ambiguous regardless of action.
+            if (has_block_time && has_allow_time)
+            {
+                log_msg(cfg, 0, 1, "[ERROR] Filter #%d: both 'block_time' and 'allow_time' set — remove one.", i + 1);
+                exit(EXIT_FAILURE);
+            }
+            if (action_is_block && has_allow_time)
+            {
+                log_msg(cfg, 0, 1, "[ERROR] Filter #%d: 'allow_time' set on a block rule (action=0). Remove it or set action=1.", i + 1);
+                exit(EXIT_FAILURE);
+            }
+            if (action_is_allow && has_block_time)
+            {
+                log_msg(cfg, 0, 1, "[ERROR] Filter #%d: 'block_time' set on an allow rule (action=1). Remove it or set action=0.", i + 1);
+                exit(EXIT_FAILURE);
             }
         }
     }
