@@ -61,7 +61,7 @@ int xdp_prog_main(struct xdp_md *ctx)
     }
 
 #ifdef ENABLE_ARP_FILTER
-    // ARP filter: only allow ARP requests targeting our IP.
+    // ARP filter: strictly validate Ethernet/IPv4 ARP and only allow ARP targeting our IP.
     if (eth->h_proto == htons(ETH_P_ARP))
     {
         struct arphdr *arp = data + sizeof(struct ethhdr);
@@ -70,7 +70,22 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (unlikely((void *)arp + sizeof(struct arphdr) + 2 * ETH_ALEN + 2 * 4 > data_end))
         {
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
 
+        // Strict RFC 826 sanity:
+        //   - Hardware type MUST be Ethernet (1), Protocol type MUST be IPv4 (0x0800)
+        //   - Hardware address length MUST be 6 (ETH_ALEN), Protocol length MUST be 4
+        //   - Opcode MUST be ARP Request (1) or ARP Reply (2)
+        // Drops all malformed ARP frames and non-IPv4 ARP variants (RARP, etc.).
+        u16 op = arp->ar_op;
+        if (unlikely(arp->ar_hrd != htons(ARPHRD_ETHER) ||
+                        arp->ar_pro != htons(ETH_P_IP) ||
+                        arp->ar_hln != ETH_ALEN ||
+                        arp->ar_pln != 4 ||
+                        (op != htons(1) && op != htons(2))))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
 
@@ -78,41 +93,55 @@ int xdp_prog_main(struct xdp_md *ctx)
         u32 zero = 0;
         u32 *arp_enabled = bpf_map_lookup_elem(&map_arp_enabled, &zero);
 
-        // Only filter Ethernet/IPv4 ARP; let other ARP variants fall through.
-        // if (arp->ar_hrd == htons(ARPHRD_ETHER) && arp->ar_pro == htons(ETH_P_IP))
-        if (arp_enabled && *arp_enabled &&
-            arp->ar_hrd == htons(ARPHRD_ETHER) && arp->ar_pro == htons(ETH_P_IP))
+        // make sure no vlan, eg: tcpdump -ni eth0 -e -c 200 | grep -i vlan
+        if (arp_enabled && *arp_enabled)
         {
-            // Walk to target IP field: skip arphdr(8) + SHA(6) + SPA(4) + THA(6) = 24 bytes.
-            u8 *ptr = (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN + 4 + ETH_ALEN;
-            u32 ar_tip;
-            __builtin_memcpy(&ar_tip, ptr, 4);
+            // Sender IP (SPA): offset = arphdr(8) + SHA(6) = 14 bytes.
+            // Target IP (TPA): offset = arphdr(8) + SHA(6) + SPA(4) + THA(6) = 24 bytes.
+            u32 ar_sip, ar_tip;
+            __builtin_memcpy(&ar_sip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN, 4);
+            __builtin_memcpy(&ar_tip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN + 4 + ETH_ALEN, 4);
 
-            // u32 key = 0;
-            // u32 *my_ip = bpf_map_lookup_elem(&map_my_ip, &key);
-            // // Drop if target IP is not ours (my_ip == 0 means unconfigured, let all pass).
-            // if (my_ip && *my_ip != 0 && ar_tip != *my_ip)
-            u8 *found = bpf_map_lookup_elem(&map_my_ip, &ar_tip);
-            if (!found)
+            // 1. Target IP must be one of our own IPs in map_my_ip.
+            u8 *tip_is_ours = bpf_map_lookup_elem(&map_my_ip, &ar_tip);
+            if (!tip_is_ours)
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
 
+            // 2. Anti-ARP-Spoofing / Gratuitous ARP conflict protection:
+            //    An external host on the bridge must NEVER claim our own IP as its Sender IP (ar_sip)!
+            u8 *sip_is_ours = bpf_map_lookup_elem(&map_my_ip, &ar_sip);
+            if (unlikely(sip_is_ours != NULL))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
         }
+
+        // Valid ARP packet for our host — pass immediately so the L2 check below
+        // can safely drop all non-IPv4 / non-IPv6 / non-ARP Ethernet junk!
+        inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
+        return XDP_PASS;
     }
 #endif
 
-    // Check Ethernet protocol.
+    // Drop all remaining non-IPv4 / non-IPv6 L2 frames (STP BPDUs, LLDP, CDP,
+    // PPPoE discovery, 802.1Q VLAN noise, Loopback test frames, etc.).
 #ifdef ENABLE_IPV6
     if (unlikely(eth->h_proto != htons(ETH_P_IP) && eth->h_proto != htons(ETH_P_IPV6)))
 #else
-    if (unlikely(eth->h_proto != htons(ETH_P_IP)))
+    if (unlikely(eth->h_proto != htons(ETH_P_IP))
+#ifndef ENABLE_ARP_FILTER
+        && eth->h_proto != htons(ETH_P_ARP)
+#endif
+        )
 #endif
     {
-        inc_pkt_stats(stats, STATS_TYPE_PASSED);
+        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
 
-        return XDP_PASS;
+        return XDP_DROP;
     }
 
     // Initialize IP headers.
@@ -321,25 +350,26 @@ int xdp_prog_main(struct xdp_md *ctx)
     // and only process TCP, UDP, and ICMP/ICMPv6 downstream.
     // =========================================================================
     if ((iph && iph->protocol != IPPROTO_UDP && iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_ICMP) ||
-        (iph6 && iph6->nexthdr != IPPROTO_UDP && iph6->nexthdr != IPPROTO_TCP && iph6->nexthdr != IPPROTO_ICMPV6))
+        (iph6 && iph6->nexthdr != IPPROTO_TCP && iph6->nexthdr != IPPROTO_UDP && iph6->nexthdr != IPPROTO_ICMPV6 && iph6->nexthdr != 44))
     {
-        // Drop known invalid/scan/flood L3 protocols on a public VPS:
-        //   - IPv4 protocol 0 (zero-init flood), 2 (IGMP), 88 (EIGRP), 89 (OSPF),
-        //     103 (PIM), 112 (VRRP), 144..255 (IANA unassigned/experimental/reserved)
-        //   - IPv6 nexthdr 0 (Hop-by-Hop DoS), 43 (Routing Header), 144..255
-        if ((iph && (iph->protocol == 0 || iph->protocol == 2 ||
-                        iph->protocol == 88 || iph->protocol == 89 ||
-                        iph->protocol == 103 || iph->protocol == 112 ||
-                        iph->protocol >= 144)) ||
-            (iph6 && (iph6->nexthdr == 0 || iph6->nexthdr == 43 ||
-                        iph6->nexthdr >= 144)))
-        {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
-        inc_pkt_stats(stats, STATS_TYPE_PASSED);
-        return XDP_PASS;
+        // // Drop known invalid/scan/flood L3 protocols on a public VPS:
+        // //   - IPv4 protocol 0 (zero-init flood), 2 (IGMP), 88 (EIGRP), 89 (OSPF),
+        // //     103 (PIM), 112 (VRRP), 144..255 (IANA unassigned/experimental/reserved)
+        // //   - IPv6 nexthdr 0 (Hop-by-Hop DoS), 43 (Routing Header), 144..255
+        // if ((iph && (iph->protocol == 0 || iph->protocol == 2 ||
+        //                 iph->protocol == 88 || iph->protocol == 89 ||
+        //                 iph->protocol == 103 || iph->protocol == 112 ||
+        //                 iph->protocol >= 144)) ||
+        //     (iph6 && (iph6->nexthdr == 0 || iph6->nexthdr == 43 ||
+        //                 iph6->nexthdr >= 144)))
+        // {
+        //     inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+        //     return XDP_DROP;
+        // }
+        // inc_pkt_stats(stats, STATS_TYPE_PASSED);
+        // return XDP_PASS;
+        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+        return XDP_DROP;
     }
 
 // Do not parse L4 on non-first fragments — payload would be misread
