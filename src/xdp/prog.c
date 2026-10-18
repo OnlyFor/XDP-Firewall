@@ -123,6 +123,8 @@ int xdp_prog_main(struct xdp_md *ctx)
 
     // =========================================================================
     // Stage 1: L3 Header Parsing, Sanity Check & "Not-My-IP" Destination Filter
+    // Executed BEFORE bpf_ktime_get_ns() and map_block lookup so malformed,
+    // truncated, bogon-spoofed, or neighbor-flooded packets are dropped early.
     // =========================================================================
     if (eth->h_proto == htons(ETH_P_IP))
     {
@@ -139,7 +141,14 @@ int xdp_prog_main(struct xdp_md *ctx)
         u8  s_msb   = *((u8 *)&iph->saddr);
         u8  d_msb   = *((u8 *)&iph->daddr);
 
-        // Basic IPv4 header sanity, bogon source, and LAND attack check.
+        // 1. Version must be 4; ihl >= 20B; tot_len >= ihl_len;
+        // 2. Truncated packet check: (void *)iph + tot_len > data_end;
+        // 3. Bogon source IPs (RFC 1122 §3.2.1.3 / RFC 6890):
+        //    - 0.0.0.0/8   (s_msb == 0)
+        //    - 127.0.0.0/8 (s_msb == 127 or d_msb == 127, loopback on external NIC)
+        //    - 224.0.0.0/3 (s_msb >= 0xE0, multicast + reserved + broadcast)
+        // 4. LAND attack: saddr == daddr on external interface;
+        // 5. Cross-protocol mismatch: IPPROTO_ICMPV6 (58) inside an IPv4 packet.
         if (unlikely(iph->version != 4 ||
                         iph->ihl < 5 ||
                         tot_len < ihl_len ||
@@ -153,13 +162,13 @@ int xdp_prog_main(struct xdp_md *ctx)
         }
 
 #ifdef ENABLE_ARP_FILTER
-        // ---- Global IPv4 Destination Filter (TCP / UDP / ICMP / All Protocols) ----
-        // Drops all packets whose dst_ip is NOT our own IP (when my_ips is configured):
+        // ---- Global IPv4 Destination Filter (Covers TCP / UDP / ICMP / All Protocols) ----
+        // Drops all IPv4 packets whose dst_ip is NOT our own IP (when my_ips is configured):
         //   1. Eliminates host-bridge "unknown unicast flooding" (neighbor VPS traffic on 443, etc.);
         //   2. Eliminates unauthorized routing/forwarding probes from L2 neighbors;
-        //   3. Automatically drops all IPv4 multicast/broadcast traffic unless our IP is matched.
+        //   3. Automatically drops IPv4 multicast/broadcast traffic since they are not in map_my_ip.
         // Do NOT call junk_block_src() here because saddr on flooded packets may be a
-        // legitimate external server (e.g., Cloudflare/GitHub port 443 talking to a neighbor VPS).
+        // legitimate external server talking to a neighbor VPS.
         {
             u32 zero = 0;
             u32 *arp_enabled = bpf_map_lookup_elem(&map_arp_enabled, &zero);
@@ -195,6 +204,13 @@ int xdp_prog_main(struct xdp_md *ctx)
         u16 plen   = ntohs(iph6->payload_len);
         u8  s6_msb = iph6->saddr.in6_u.u6_addr8[0];
 
+        // 1. Version must be 6;
+        // 2. Truncated IPv6 payload: (void *)(iph6 + 1) + plen > data_end;
+        // 3. Multicast source (ff00::/8, RFC 4291 §2.7) is never valid;
+        // 4. LAND attack: src_ip6 == dst_ip6 (also catches :: -> ::);
+        // 5. Unspecified source (::) is only valid in DAD Neighbor Solicitation (ICMPv6),
+        //    never in TCP/UDP or other protocols;
+        // 6. Cross-protocol mismatch: IPv4 ICMP (1) or No-Next-Header (59) on IPv6.
         if (unlikely(iph6->version != 6 ||
                         (void *)(iph6 + 1) + plen > data_end ||
                         s6_msb == 0xff ||
@@ -208,12 +224,13 @@ int xdp_prog_main(struct xdp_md *ctx)
         }
 
 #ifdef ENABLE_NDP_FILTER
-        // ---- Global IPv6 Destination Filter (TCP / UDP / Non-NDP ICMPv6) ----
+        // ---- Global IPv6 Destination Filter (Covers TCP / UDP / Non-ICMPv6) ----
         // For TCP, UDP, and all non-ICMPv6 protocols, dst_ip6 MUST be either:
         //   - One of our configured global IPv6 addresses in map_my_ip6, OR
         //   - A link-local address (fe80::/10).
-        // (ICMPv6 is checked right below in ENABLE_NDP_FILTER because NDP NS/RA
-        // legitimately use ff02::1 / solicited-node multicast as outer dst_ip6.)
+        // Note: IPPROTO_ICMPV6 is intentionally skipped here and checked inside
+        // ENABLE_NDP_FILTER below, because NDP (134 RA / 135 NS / 136 NA) uses
+        // multicast (ff02::) as outer dst_ip6 and carries the target IP inside the payload.
         if (iph6->nexthdr != IPPROTO_ICMPV6)
         {
             u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
@@ -325,7 +342,6 @@ int xdp_prog_main(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-
 // Do not parse L4 on non-first fragments — payload would be misread
 // as TCP/UDP/ICMP headers. tcph/udph/icmph stay NULL; rules that
 // require L4 fields simply won't match, IP-level rules still apply.
@@ -334,17 +350,18 @@ int xdp_prog_main(struct xdp_md *ctx)
 int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
 
     // =========================================================================
-    // Stage 4: ICMPv4 & ICMPv6 / NDP Pre-Filters (Reusing map_my_ip / map_my_ip6)
+    // Stage 4: ICMPv4 & ICMPv6 / NDP Pre-Filters
     // =========================================================================
 #ifdef ENABLE_ARP_FILTER
-    // IPv4 ICMP pre-filter (reuses map_arp_enabled and map_my_ip from ENABLE_ARP_FILTER):
-    // 1. Ensures ICMP packet is actually addressed to our own IP (drops Smurf broadcast/multicast & neighbor noise).
-    // 2. Drops 100% invalid, deprecated (RFC 6633 / RFC 6918), or scanner-probe ICMPv4 packets targeting us.
+    // IPv4 ICMP pre-filter:
+    // Note: dst_ip ownership (map_my_ip), bogon saddr, and LAND attack were ALREADY
+    // verified in Stage 1 above, so no duplicate map_my_ip lookup is needed here!
     if (iph && iph->protocol == IPPROTO_ICMP)
     {
         u8 d_msb = *((u8 *)&iph->daddr);
 
-        // Drop multicast/broadcast destination (Smurf amplification, RFC 2644).
+        // Fallback multicast/broadcast destination drop (Smurf amplification, RFC 2644)
+        // in case map_arp_enabled (my_ips) is not configured in xdpfw.conf.
         if (unlikely((d_msb >= 0xE0 && d_msb <= 0xEF) || iph->daddr == 0xFFFFFFFF))
         {
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
@@ -384,7 +401,7 @@ int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
                 return XDP_DROP;
             }
 
-            // RFC 792 / RFC 1812: ICMP Error messages (Type 3, 11, 12) must carry at least
+            // RFC 792 / RFC 1812: ICMPv4 Error messages (Type 3, 11, 12) must carry at least
             // 8B icmphdr + 20B offending iphdr + 8B L4 = 36B, and are never fragmented (MF=1).
             if ((type == 3 || type == 11 || type == 12) &&
                 unlikely((void *)icmph_j + 36 > data_end || (iph->frag_off & htons(0x2000))))
@@ -397,7 +414,9 @@ int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
 #endif
 
 #ifdef ENABLE_NDP_FILTER
-    // IPv6 ICMPv6 & NDP pre-filter (reuses map_ndp_enabled and map_my_ip6):
+    // IPv6 ICMPv6 & NDP pre-filter:
+    // Because Stage 1 skipped IPPROTO_ICMPV6, we validate NDP target (Case A)
+    // and non-NDP outer dst_ip6 (Case B) against map_my_ip6 here.
     if (iph6 && iph6->nexthdr == IPPROTO_ICMPV6)
     {
         struct icmp6hdr *icmp6_hdr = (void *)iph6 + sizeof(struct ipv6hdr);
@@ -412,6 +431,7 @@ int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
         u8 code = icmp6_hdr->icmp6_code;
 
         // ---- Case A: On-link NDP (134 RA, 135 NS, 136 NA) ----
+        // (RS 133 and Redirect 137 fall into Case B and are dropped.)
         if (type == 134 || type == 135 || type == 136)
         {
             // RFC 4861 §6.1.2 / §7.1.1: hop_limit MUST be 255 and code MUST be 0.
@@ -433,13 +453,28 @@ int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
                     return XDP_DROP;
                 }
             }
-            // NS (135) / NA (136): validate 16B target address against map_my_ip6.
+            // NS (135) / NA (136): validate 16B inner target address against map_my_ip6.
             else
             {
                 if (unlikely((void *)icmp6_hdr + 24 > data_end))
                 {
                     inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                     return XDP_DROP;
+                }
+
+                u32 zero = 0;
+                u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+
+                if (ndp_enabled && *ndp_enabled)
+                {
+                    u128 ndp_target;
+                    __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
+
+                    if (!bpf_map_lookup_elem(&map_my_ip6, &ndp_target))
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                        return XDP_DROP;
+                    }
                 }
             }
         }
@@ -461,11 +496,25 @@ int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
                 return XDP_DROP;
             }
 
-            // RFC 4443: error must embed at least the full 40B invoking IPv6 header.
-            // 8B icmp6hdr + 40B = 48B minimum. (8B of L4 beyond that is customary
-            // but not strictly required — don't enforce it.)
+            // Ensure outer dst_ip6 is ours (or link-local fe80::/10) — required here
+            // because Stage 1 skipped IPPROTO_ICMPV6!
+            u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
+            u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
+            if (!(d0 == 0xfe && (d1 & 0xc0) == 0x80))
+            {
+                u32 zero = 0;
+                u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
 
-            // RFC 4443: ICMPv6 Error (Type 1..4) must carry >= 8B hdr + 40B ip6hdr + 8B L4 = 56B.
+                if (ndp_enabled && *ndp_enabled &&
+                    !bpf_map_lookup_elem(&map_my_ip6, &dst_ip6))
+                {
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
+            }
+
+            // RFC 4443 §2.4(c): ICMPv6 Error (Type 1..4) must carry at least
+            // 8B icmp6hdr + 40B offending ipv6hdr = 48B total.
             if (type <= 4 && unlikely((void *)icmp6_hdr + 48 > data_end))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
@@ -474,6 +523,7 @@ int is_nonfirst_frag = (iph && (iph->frag_off & htons(0x1FFF)));
         }
     }
 #endif
+
 
     // =========================================================================
     // Stage 5: TCP Stateless Pre-Filter
