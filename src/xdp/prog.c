@@ -105,18 +105,20 @@ int xdp_prog_main(struct xdp_md *ctx)
         {
             // Sender IP (SPA): offset 14B; Target IP (TPA): offset 24B.
             u32 ar_sip, ar_tip;
-            __builtin_memcpy(&ar_sip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN, 4);
-            __builtin_memcpy(&ar_tip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN + 4 + ETH_ALEN, 4);
+            // __builtin_memcpy(&ar_sip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN, 4);
+            // __builtin_memcpy(&ar_tip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN + 4 + ETH_ALEN, 4);
 
             // 1. Target IP must be one of our own IPs in map_my_ip.
-            if (!bpf_map_lookup_elem(&map_my_ip, &ar_tip))
+            // if (!bpf_map_lookup_elem(&map_my_ip, &ar_tip))
+            if (!bpf_map_lookup_elem(&map_my_ip, (u8 *)arp + 24))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
 
             // 2. Anti-ARP-Spoofing: external host must never claim our own IP as Sender IP.
-            if (unlikely(bpf_map_lookup_elem(&map_my_ip, &ar_sip) != NULL))
+            // if (unlikely(bpf_map_lookup_elem(&map_my_ip, &ar_sip) != NULL))
+            if (unlikely(bpf_map_lookup_elem(&map_my_ip, (u8 *)arp + 14) != NULL))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
@@ -241,10 +243,11 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         if (arp_enabled && *arp_enabled)
         {
-            u32 daddr_check;
-            __builtin_memcpy(&daddr_check, &iph->daddr, sizeof(daddr_check));
+            // u32 daddr_check;
+            // __builtin_memcpy(&daddr_check, &iph->daddr, sizeof(daddr_check));
 
-            if (!bpf_map_lookup_elem(&map_my_ip, &daddr_check))
+            // if (!bpf_map_lookup_elem(&map_my_ip, &daddr_check))
+            if (!bpf_map_lookup_elem(&map_my_ip, &iph->daddr))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
@@ -590,10 +593,11 @@ int xdp_prog_main(struct xdp_md *ctx)
 
                 if (ndp_enabled && *ndp_enabled)
                 {
-                    u128 ndp_target;
-                    __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
+                    // u128 ndp_target;
+                    // __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
 
-                    if (!bpf_map_lookup_elem(&map_my_ip6, &ndp_target))
+                    /// if (!bpf_map_lookup_elem(&map_my_ip6, &ndp_target))
+                    if (!bpf_map_lookup_elem(&map_my_ip6, (u8 *)icmp6_hdr + 8))
                     {
                         inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                         return XDP_DROP;
@@ -875,9 +879,10 @@ int xdp_prog_main(struct xdp_md *ctx)
 #ifdef ENABLE_ARP_FILTER
             if (iph)
             {
-                u32 saddr;
-                __builtin_memcpy(&saddr, &iph->saddr, sizeof(saddr));
-                u8 *local = bpf_map_lookup_elem(&map_my_ip, &saddr);
+                // u32 saddr;
+                // __builtin_memcpy(&saddr, &iph->saddr, sizeof(saddr));
+                // u8 *local = bpf_map_lookup_elem(&map_my_ip, &saddr);
+                u8 *local = bpf_map_lookup_elem(&map_my_ip, &iph->saddr);
                 is_loopback = (local != NULL);
             }
 #endif

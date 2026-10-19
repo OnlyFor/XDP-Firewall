@@ -64,16 +64,17 @@ static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* ip
         if (!is_private && src_msb < 224 && iph->saddr != 0)
         {
 #if defined(ENABLE_ARP_FILTER)
-            u32 saddr_j;
-            __builtin_memcpy(&saddr_j, &iph->saddr, sizeof(saddr_j));
-            u8 *own = bpf_map_lookup_elem(&map_my_ip, &saddr_j);
-            if (!own)
+            // u32 saddr_j;
+            // __builtin_memcpy(&saddr_j, &iph->saddr, sizeof(saddr_j));
+            // u8 *own = bpf_map_lookup_elem(&map_my_ip, &saddr_j);
+            if (!bpf_map_lookup_elem(&map_my_ip, &iph->saddr))
 #endif
             {
-                u32 saddr_b;
-                __builtin_memcpy(&saddr_b, &iph->saddr, sizeof(saddr_b));  // ← 栈上拷贝
+                // u32 saddr_b;
+                // __builtin_memcpy(&saddr_b, &iph->saddr, sizeof(saddr_b));  // ← 栈上拷贝
                 u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
-                bpf_map_update_elem(&map_block, &saddr_b, &expire, BPF_ANY);  // ← 用栈变量
+                // bpf_map_update_elem(&map_block, &saddr_b, &expire, BPF_ANY);  // ← 用栈变量
+                bpf_map_update_elem(&map_block, &iph->saddr, &expire, BPF_ANY);  // ← 用栈变量
             }
         }
     }
