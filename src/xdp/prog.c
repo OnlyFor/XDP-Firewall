@@ -230,167 +230,6 @@ int xdp_prog_main(struct xdp_md *ctx)
         }
 
 #ifdef ENABLE_ARP_FILTER
-    // ARP filter: strictly validate Ethernet/IPv4 ARP and only allow ARP targeting our IP.
-    if (eth->h_proto == htons(ETH_P_ARP))
-    {
-        struct arphdr *arp = data + sizeof(struct ethhdr);
-
-        // Ethernet ARP = arphdr(8) + SHA(6) + SPA(4) + THA(6) + TPA(4) = 28 bytes.
-        if (unlikely((void *)arp + sizeof(struct arphdr) + 2 * ETH_ALEN + 2 * 4 > data_end))
-        {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
-        // Strict RFC 826 sanity: Ethernet(1), IPv4(0x0800), hln=6, pln=4, op in {1, 2}.
-        u16 op = arp->ar_op;
-        if (unlikely(arp->ar_hrd != htons(ARPHRD_ETHER) ||
-                        arp->ar_pro != htons(ETH_P_IP) ||
-                        arp->ar_hln != ETH_ALEN ||
-                        arp->ar_pln != 4 ||
-                        (op != htons(1) && op != htons(2))))
-        {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
-        // Check if ARP filter is enabled (my_ips_cnt > 0).
-        u32 zero = 0;
-        u32 *arp_enabled = bpf_map_lookup_elem(&map_arp_enabled, &zero);
-
-        if (arp_enabled && *arp_enabled)
-        {
-            // Sender IP (SPA): offset 14B; Target IP (TPA): offset 24B.
-            u32 ar_sip, ar_tip;
-            __builtin_memcpy(&ar_sip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN, 4);
-            __builtin_memcpy(&ar_tip, (u8 *)arp + sizeof(struct arphdr) + ETH_ALEN + 4 + ETH_ALEN, 4);
-
-            // 1. Target IP must be one of our own IPs in map_my_ip.
-            if (!bpf_map_lookup_elem(&map_my_ip, &ar_tip))
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-
-            // 2. Anti-ARP-Spoofing: external host must never claim our own IP as Sender IP.
-            if (unlikely(bpf_map_lookup_elem(&map_my_ip, &ar_sip) != NULL))
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-        }
-
-        // Valid ARP packet — return XDP_PASS here so the L2 check below can
-        // safely drop all non-IPv4 / non-IPv6 L2 junk frames.
-        inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
-        return XDP_PASS;
-    }
-#else
-    if (eth->h_proto == htons(ETH_P_ARP))
-    {
-        inc_pkt_stats(stats, STATS_TYPE_ALLOWED);
-        return XDP_PASS;
-    }
-#endif
-
-    // Check Ethernet protocol: drop all remaining non-IPv4 / non-IPv6 L2 noise
-    // (STP BPDUs, LLDP, CDP, Loopback keepalive, etc.).
-#ifdef ENABLE_IPV6
-    if (unlikely(eth->h_proto != htons(ETH_P_IP) && eth->h_proto != htons(ETH_P_IPV6)))
-#else
-    if (unlikely(eth->h_proto != htons(ETH_P_IP)))
-#endif
-    {
-        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-        return XDP_DROP;
-    }
-
-    // Initialize IP headers and unified fragmentation / L4 tracking variables.
-    // Declared unconditionally so downstream expressions compile cleanly
-    // regardless of whether ENABLE_IPV6 is enabled or disabled.
-    struct iphdr *iph = NULL;
-    struct ipv6hdr *iph6 = NULL;
-    u128 src_ip6 = 0;
-    u128 dst_ip6 = 0;
-
-    int   is_nonfirst_frag = 0;    // 1 if UDP non-first fragment (offset > 0)
-    int   is_frag_pkt      = 0;    // 1 if multi-part UDP fragment (offset > 0 or MF/M == 1)
-    u8    nexthdr6         = 0;    // Effective IPv6 L4 protocol (unwrapped if nexthdr == 44)
-    void *l4_hdr6          = NULL; // Effective IPv6 L4 header pointer (+40B normal, +48B if frag_hdr)
-
-    // =========================================================================
-    // Stage 1: L3 Header Parsing, Sanity, Fragment Integrity & "Not-My-IP" Filter
-    // =========================================================================
-    if (eth->h_proto == htons(ETH_P_IP))
-    {
-        iph = data + sizeof(struct ethhdr);
-
-        if (unlikely(iph + 1 > (struct iphdr *)data_end))
-        {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
-        u16 tot_len  = ntohs(iph->tot_len);
-        u16 ihl_len  = iph->ihl * 4;
-        u8  s_msb    = *((u8 *)&iph->saddr);
-        u8  d_msb    = *((u8 *)&iph->daddr);
-        u16 frag_off = ntohs(iph->frag_off);
-
-        // 1. Version == 4; ihl >= 20B; tot_len >= ihl_len; frame not truncated;
-        // 2. Bogon saddr (0.0.0.0/8, 127.0.0.0/8, 224.0.0.0/3) or loopback daddr;
-        // 3. LAND attack (saddr == daddr) or cross-protocol IPPROTO_ICMPV6 (58);
-        // 4. RFC 3514: Reserved bit (0x8000 "Evil Bit") in frag_off MUST be 0.
-        if (unlikely(iph->version != 4 ||
-                        iph->ihl < 5 ||
-                        tot_len < ihl_len ||
-                        (void *)iph + tot_len > data_end ||
-                        s_msb == 0 || s_msb == 127 || d_msb == 127 || s_msb >= 0xE0 ||
-                        iph->saddr == iph->daddr ||
-                        iph->protocol == IPPROTO_ICMPV6 ||
-                        (frag_off & 0x8000)))
-        {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
-        // ---- IPv4 Fragmentation Integrity Pre-Filter ----
-        // On a modern public VPS, TCP always uses PMTUD (DF=1) and ICMP never
-        // legitimately fragments; only large UDP (e.g. DNSSEC) can legitimately fragment.
-        // Dropping non-UDP fragments here also prevents TCP/ICMP non-first fragments
-        // from bypassing protocol-specific rules in ENABLE_FILTERS (where tcph/icmph == NULL).
-        if (unlikely(frag_off & 0x3FFF))
-        {
-            u16 offset_bytes = (frag_off & 0x1FFF) * 8;
-            u16 l3_plen      = tot_len - ihl_len;
-            int mf           = (frag_off & 0x2000) != 0;
-
-            // Drop 100% illegal or non-UDP IPv4 fragments:
-            //   1. Non-UDP protocol fragmented (blocks TCP Rose/Teardrop & ICMP Ping-of-Death floods);
-            //   2. DF (0x4000) set simultaneously with MF or offset > 0;
-            //   3. Empty fragment (l3_plen == 0);
-            //   4. Non-last fragment (MF == 1) whose L3 payload length is not a multiple of 8B;
-            //   5. Reassembly overflow > 65535B (offset_bytes + tot_len > 65535);
-            //   6. Tiny first fragment (offset_bytes == 0 && l3_plen < 256: minimum internet
-            //      reassembly MTU is 576B, so a real first fragment is never < 256B);
-            //   7. Tiny/overlapping non-first fragment (offset_bytes > 0 && offset_bytes < 256).
-            if (unlikely(iph->protocol != IPPROTO_UDP ||
-                            (frag_off & 0x4000) ||
-                            l3_plen == 0 ||
-                            (mf && (l3_plen & 7)) ||
-                            ((u32)offset_bytes + tot_len > 65535) ||
-                            (offset_bytes == 0 && l3_plen < 256) ||
-                            (offset_bytes > 0 && offset_bytes < 256)))
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-
-            is_nonfirst_frag = (offset_bytes > 0);
-            is_frag_pkt      = 1;
-        }
-
-#ifdef ENABLE_ARP_FILTER
         // ---- Global IPv4 Destination Filter (Covers TCP / UDP / ICMP) ----
         // Drops host-bridge unknown-unicast flooded packets not addressed to our IP.
         u32 zero = 0;
@@ -426,17 +265,6 @@ int xdp_prog_main(struct xdp_md *ctx)
         u16 plen   = ntohs(iph6->payload_len);
         u8  s6_msb = iph6->saddr.in6_u.u6_addr8[0];
 
-        // Validate outer IPv6 header BEFORE inspecting extension headers so
-        // (iph6 + 1) + plen <= data_end is already guaranteed.
-        if (unlikely(iph6->version != 6 ||
-                        (void *)(iph6 + 1) + plen > data_end ||
-                        s6_msb == 0xff ||
-                        (__builtin_memcmp(&src_ip6, &dst_ip6, sizeof(src_ip6)) == 0)))
-        {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
         nexthdr6 = iph6->nexthdr;
         l4_hdr6  = (void *)iph6 + sizeof(struct ipv6hdr);
 
@@ -448,7 +276,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         {
             struct frag_hdr *fhdr = l4_hdr6;
 
-            // Check (fhdr + 1) <= data_end for verifier safety, and plen > 8 so
+            // Check (fhdr + 1) <= data_end for memory safety, and plen > 8 so
             // `plen - 8` below cannot underflow u16 if ipv6hdr->payload_len lied.
             if (unlikely((void *)(fhdr + 1) > data_end || plen <= sizeof(struct frag_hdr)))
             {
@@ -478,16 +306,16 @@ int xdp_prog_main(struct xdp_md *ctx)
             // For real multi-part fragments (offset_bytes > 0 || mf6), enforce fragment integrity:
             if (offset_bytes > 0 || mf6)
             {
-                // 1. Only UDP may legitimately use multi-part IPv6 fragmentation (blocks TCP & ICMPv6/NDP frags);
-                // 2. Non-last fragment (M == 1) payload length must be a multiple of 8B;
-                // 3. Reassembly overflow > 65535B (offset_bytes + 40 + frag_plen > 65535);
-                // 4. Tiny first fragment (offset_bytes == 0 && frag_plen < 256, RFC 7112);
-                // 5. Tiny/overlapping non-first fragment (offset_bytes > 0 && offset_bytes < 256).
-                if (unlikely(nexthdr6 != IPPROTO_UDP ||
-                                (mf6 && (frag_plen & 7)) ||
+                // 1. Non-last fragment (M == 1) payload length must be a multiple of 8B;
+                // 2. Reassembly overflow > 65535B (offset_bytes + 40 + frag_plen > 65535);
+                // 3. RFC 7112 tiny first fragment (offset_bytes == 0 && frag_plen < 24);
+                // 4. Overlapping non-first fragment (offset_bytes > 0 && offset_bytes < 24);
+                // 5. Fragmented IPv6 TCP (IPv6 mandates PMTUD >= 1280B; TCP never fragments).
+                if (unlikely((mf6 && (frag_plen & 7)) ||
                                 ((u32)offset_bytes + 40 + frag_plen > 65535) ||
-                                (offset_bytes == 0 && frag_plen < 256) ||
-                                (offset_bytes > 0 && offset_bytes < 256)))
+                                (offset_bytes == 0 && frag_plen < 24) ||
+                                (offset_bytes > 0 && offset_bytes < 24) ||
+                                nexthdr6 == IPPROTO_TCP))
                 {
                     inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                     return XDP_DROP;
@@ -498,8 +326,11 @@ int xdp_prog_main(struct xdp_md *ctx)
             }
         }
 
-        // Validate unwrapped inner protocol & unspecified source address (::).
-        if (unlikely((src_ip6 == 0 && nexthdr6 != IPPROTO_ICMPV6) ||
+        if (unlikely(iph6->version != 6 ||
+                        (void *)(iph6 + 1) + plen > data_end ||
+                        s6_msb == 0xff ||
+                        (__builtin_memcmp(&src_ip6, &dst_ip6, sizeof(src_ip6)) == 0) ||
+                        (src_ip6 == 0 && nexthdr6 != IPPROTO_ICMPV6) ||
                         nexthdr6 == IPPROTO_ICMP ||
                         nexthdr6 == 59))
         {
@@ -629,8 +460,6 @@ int xdp_prog_main(struct xdp_md *ctx)
 
     // =========================================================================
     // Stage 4: ICMPv4 & ICMPv6 / NDP Pre-Filters
-    // Note: Stage 1 already dropped all multi-part fragmented ICMP/ICMPv6 packets,
-    // so every ICMP/ICMPv6 packet reaching Stage 4 is guaranteed unfragmented!
     // =========================================================================
 #ifdef ENABLE_ARP_FILTER
     // IPv4 ICMP pre-filter:
@@ -648,50 +477,55 @@ int xdp_prog_main(struct xdp_md *ctx)
             return XDP_DROP;
         }
 
-        struct icmphdr *icmph_j = (void *)iph + (iph->ihl * 4);
-
-        if (unlikely((void *)icmph_j + sizeof(struct icmphdr) > data_end))
+        // ---- Step 3: L4 ICMPv4 header & payload sanity (on first/unfragmented packet) ----
+        if (!is_nonfirst_frag)
         {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
+            struct icmphdr *icmph_j = (void *)iph + (iph->ihl * 4);
 
-        u8 type = icmph_j->type;
-        u8 code = icmph_j->code;
-
-        // Strict RFC whitelist for ICMPv4 types & codes:
-        //   - Type 0/8 (Echo Reply/Request): code MUST be 0 (non-zero = Nmap/Sing OS probe)
-        //   - Type 3   (Dest Unreachable):   code 0..15 (includes Code 4 PMTUD)
-        //   - Type 11  (Time Exceeded):      code 0..1
-        //   - Type 12  (Parameter Problem):  code 0..2
-        // Drops Timestamp (13/14), Info (15/16), Address Mask (17/18), Redirect (5), Source Quench (4)
-        int valid_icmp4 =
-            ((type == 0 || type == 8) && code == 0) ||
-            (type == 3  && code <= 15) ||
-            (type == 11 && code <= 1)  ||
-            (type == 12 && code <= 2);
-
-        if (unlikely(!valid_icmp4))
-        {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
-        // ICMPv4 Error (Type 3, 11, 12): >= 36B, and inner offending iphdr must match our IP.
-        if (type == 3 || type == 11 || type == 12)
-        {
-            struct iphdr *inner_iph = (struct iphdr *)(icmph_j + 1);
-
-            if (unlikely((void *)icmph_j + 36 > data_end ||
-                            inner_iph->version != 4 ||
-                            inner_iph->ihl < 5 ||
-                            inner_iph->saddr != iph->daddr ||
-                            (inner_iph->protocol != IPPROTO_TCP &&
-                            inner_iph->protocol != IPPROTO_UDP &&
-                            inner_iph->protocol != IPPROTO_ICMP)))
+            // RFC 1858 / Guard clause: first/unfragmented packet must contain full 8B ICMP header.
+            if (unlikely((void *)icmph_j + sizeof(struct icmphdr) > data_end))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
+            }
+
+            u8 type = icmph_j->type;
+            u8 code = icmph_j->code;
+
+            // Strict RFC whitelist for ICMPv4 types & codes:
+            //   - Type 0/8 (Echo Reply/Request): code MUST be 0 (non-zero = Nmap/Sing OS probe)
+            //   - Type 3   (Dest Unreachable):   code 0..15 (includes Code 4 PMTUD)
+            //   - Type 11  (Time Exceeded):      code 0..1
+            //   - Type 12  (Parameter Problem):  code 0..2
+            // Drops Timestamp (13/14), Info (15/16), Address Mask (17/18), Redirect (5), Source Quench (4).
+            int valid_icmp4 =
+                ((type == 0 || type == 8) && code == 0) ||
+                (type == 3  && code <= 15) ||
+                (type == 11 && code <= 1)  ||
+                (type == 12 && code <= 2);
+
+            if (unlikely(!valid_icmp4))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
+
+            // ICMPv4 Error (Type 3, 11, 12): unfragmented, >= 36B, and inner iphdr must match our IP.
+            if (type == 3 || type == 11 || type == 12)
+            {
+                struct iphdr *inner_iph = (struct iphdr *)(icmph_j + 1);
+
+                if (unlikely(is_frag_pkt || (void *)icmph_j + 36 > data_end ||
+                                inner_iph->version != 4 ||
+                                inner_iph->ihl < 5 ||
+                                inner_iph->saddr != iph->daddr ||
+                                (inner_iph->protocol != IPPROTO_TCP &&
+                                inner_iph->protocol != IPPROTO_UDP &&
+                                inner_iph->protocol != IPPROTO_ICMP)))
+                {
+                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                    return XDP_DROP;
+                }
             }
         }
     }
@@ -703,104 +537,121 @@ int xdp_prog_main(struct xdp_md *ctx)
     // and non-NDP outer dst_ip6 (Case B) against map_my_ip6 here.
     if (iph6 && nexthdr6 == IPPROTO_ICMPV6)
     {
-        struct icmp6hdr *icmp6_hdr = l4_hdr6;
-
-        if (unlikely((void *)icmp6_hdr + sizeof(struct icmp6hdr) > data_end))
+        if (unlikely(is_nonfirst_frag))
         {
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
+            u32 zero = 0;
+            u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+
+            if (ndp_enabled && *ndp_enabled &&
+                !bpf_map_lookup_elem(&map_my_ip6, &dst_ip6))
+            {
+                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                return XDP_DROP;
+            }
         }
-
-        u8 type = icmp6_hdr->icmp6_type;
-        u8 code = icmp6_hdr->icmp6_code;
-
-        // ---- Case A: On-link NDP (134 RA, 135 NS, 136 NA) ----
-        if (type == 134 || type == 135 || type == 136)
+        else
         {
-            // RFC 4861: hop_limit MUST be 255 and code MUST be 0.
-            if (unlikely(iph6->hop_limit != 255 || code != 0))
+            struct icmp6hdr *icmp6_hdr = l4_hdr6;
+
+            // RFC 7112 / Guard clause: first/unfragmented packet must contain full 8B ICMPv6 header.
+            if (unlikely((void *)icmp6_hdr + sizeof(struct icmp6hdr) > data_end))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
 
-            if (type == 134)
+            u8 type = icmp6_hdr->icmp6_type;
+            u8 code = icmp6_hdr->icmp6_code;
+
+            // ---- Case A: On-link NDP (134 RA, 135 NS, 136 NA) ----
+            if (type == 134 || type == 135 || type == 136)
             {
-                u8 s0 = iph6->saddr.in6_u.u6_addr8[0];
-                u8 s1 = iph6->saddr.in6_u.u6_addr8[1];
-                if (unlikely(s0 != 0xfe || (s1 & 0xc0) != 0x80))
+                // RFC 6980: NDP must never be fragmented (!is_frag_pkt).
+                // RFC 4861: hop_limit MUST be 255 and code MUST be 0.
+                if (unlikely(is_frag_pkt || iph6->hop_limit != 255 || code != 0))
                 {
                     inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                     return XDP_DROP;
                 }
-            }
-            else
-            {
-                if (unlikely((void *)icmp6_hdr + 24 > data_end))
+                // RA (134): source address MUST be link-local fe80::/10 (RFC 4861 §6.1.2).
+                if (type == 134)
                 {
-                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                    return XDP_DROP;
-                }
-
-                u32 zero = 0;
-                u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
-
-                if (ndp_enabled && *ndp_enabled)
-                {
-                    u128 ndp_target;
-                    __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
-
-                    if (!bpf_map_lookup_elem(&map_my_ip6, &ndp_target))
+                    u8 s0 = iph6->saddr.in6_u.u6_addr8[0];
+                    u8 s1 = iph6->saddr.in6_u.u6_addr8[1];
+                    if (unlikely(s0 != 0xfe || (s1 & 0xc0) != 0x80))
                     {
                         inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                         return XDP_DROP;
                     }
                 }
+                else
+                {
+                    if (unlikely((void *)icmp6_hdr + 24 > data_end))
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                        return XDP_DROP;
+                    }
+
+                    u32 zero = 0;
+                    u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+
+                    if (ndp_enabled && *ndp_enabled)
+                    {
+                        u128 ndp_target;
+                        __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
+
+                        if (!bpf_map_lookup_elem(&map_my_ip6, &ndp_target))
+                        {
+                            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                            return XDP_DROP;
+                        }
+                    }
+                }
             }
-        }
-        // ---- Case B: Non-NDP ICMPv6 (Errors 1..4 & Echo 128/129) ----
-        else
-        {
-            int valid_icmp6 =
-                ((type == 128 || type == 129 || type == 2) && code == 0) ||
-                (type == 1 && code <= 6) ||
-                (type == 3 && code <= 1) ||
-                (type == 4 && code <= 2);
-
-            if (unlikely(!valid_icmp6 || src_ip6 == 0 ||
-                            iph6->daddr.in6_u.u6_addr8[0] == 0xff))
+            // ---- Case B: Non-NDP ICMPv6 (Errors 1..4 & Echo 128/129) ----
+            else
             {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
+                int valid_icmp6 =
+                    ((type == 128 || type == 129 || type == 2) && code == 0) ||
+                    (type == 1 && code <= 6) ||
+                    (type == 3 && code <= 1) ||
+                    (type == 4 && code <= 2);
 
-            u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
-            u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
-            if (!(d0 == 0xfe && (d1 & 0xc0) == 0x80))
-            {
-                u32 zero = 0;
-                u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
-
-                if (ndp_enabled && *ndp_enabled &&
-                    !bpf_map_lookup_elem(&map_my_ip6, &dst_ip6))
+                if (unlikely(!valid_icmp6 || src_ip6 == 0 ||
+                                iph6->daddr.in6_u.u6_addr8[0] == 0xff))
                 {
                     inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                     return XDP_DROP;
                 }
-            }
 
-            // RFC 4443 §2.4(c): ICMPv6 Error (Type 1..4) must carry >= 48B
-            // (8B icmp6hdr + 40B inner ipv6hdr), and inner saddr must match dst_ip6.
-            if (type <= 4)
-            {
-                struct ipv6hdr *inner_iph6 = (struct ipv6hdr *)(icmp6_hdr + 1);
-
-                if (unlikely((void *)icmp6_hdr + 48 > data_end ||
-                                inner_iph6->version != 6 ||
-                                (__builtin_memcmp(&inner_iph6->saddr, &dst_ip6, sizeof(dst_ip6)) != 0)))
+                u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
+                u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
+                if (!(d0 == 0xfe && (d1 & 0xc0) == 0x80))
                 {
-                    inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                    return XDP_DROP;
+                    u32 zero = 0;
+                    u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
+
+                    if (ndp_enabled && *ndp_enabled &&
+                        !bpf_map_lookup_elem(&map_my_ip6, &dst_ip6))
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                        return XDP_DROP;
+                    }
+                }
+
+                // RFC 4443 §2.4(c): ICMPv6 Error (Type 1..4) must not be fragmented,
+                // must be >= 48B (8B icmp6hdr + 40B inner ipv6hdr), and inner saddr must match dst_ip6.
+                if (type <= 4)
+                {
+                    struct ipv6hdr *inner_iph6 = (struct ipv6hdr *)(icmp6_hdr + 1);
+
+                    if (unlikely(is_frag_pkt || (void *)icmp6_hdr + 48 > data_end ||
+                                    inner_iph6->version != 6 ||
+                                    (__builtin_memcmp(&inner_iph6->saddr, &dst_ip6, sizeof(dst_ip6)) != 0)))
+                    {
+                        inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+                        return XDP_DROP;
+                    }
                 }
             }
         }
@@ -809,12 +660,11 @@ int xdp_prog_main(struct xdp_md *ctx)
 
     // =========================================================================
     // Stage 5: TCP Stateless Pre-Filter
-    // Note: Stage 1 already dropped all multi-part fragmented TCP packets,
-    // so every TCP packet reaching Stage 5 is guaranteed unfragmented!
     // =========================================================================
 #ifdef ENABLE_TCP_JUNK_FILTER
-    if ((iph && iph->protocol == IPPROTO_TCP) ||
-        (iph6 && nexthdr6 == IPPROTO_TCP))
+    if (!is_nonfirst_frag &&
+        ((iph && iph->protocol == IPPROTO_TCP) ||
+            (iph6 && nexthdr6 == IPPROTO_TCP)))
     {
         // RFC 7126: Drop TCP packets carrying IPv4 Options (ihl > 5).
         if (unlikely(iph && iph->ihl != 5))
@@ -827,7 +677,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             ? (void *)iph + sizeof(struct iphdr)
             : l4_hdr6;
 
-        // Guard Clause: TCP packet MUST contain full 20B header AND full options (doff * 4).
+        // RFC 7112 / RFC 1858 Guard Clause:
+        // First fragment or unfragmented TCP packet MUST contain the full 20B base TCP header
+        // AND the full variable TCP options length (doff * 4).
         if (unlikely((void *)tcph_j + sizeof(struct tcphdr) > data_end ||
                         tcph_j->doff < 5 ||
                         (void *)tcph_j + (tcph_j->doff * 4) > data_end))
@@ -846,10 +698,17 @@ int xdp_prog_main(struct xdp_md *ctx)
             return XDP_DROP;
         }
 
+        // ---- Step 0b: Fragmented SYN (RFC 1858) ----
+        if (unlikely(is_frag_pkt && tcph_j->syn))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
         u16 dport = ntohs(tcph_j->dest);
         u16 sport = ntohs(tcph_j->source);
 
-        // ---- Step 0b: Junk destination ports ----
+        // ---- Step 0c: Junk destination ports ----
         // 注意本机 net.ipv4.ip_local_reserved_ports 需要预留高端口
         int junk_port = (
             dport == 20    ||                  // FTP data
@@ -892,7 +751,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             return XDP_DROP;
         }
 
-        // ---- Step 0c: Multicast/broadcast destination (invalid for TCP) ----
+        // ---- Step 0d: Multicast/broadcast destination (invalid for TCP) ----
         int junk_dst = 0;
         if (iph)
         {
@@ -914,21 +773,15 @@ int xdp_prog_main(struct xdp_md *ctx)
             return XDP_DROP;
         }
 
-        // ---- Step 1: Illegal SYN flag combos & SYN+ACK reflection to privileged ports ----
-        if (tcph_j->syn &&
-            (tcph_j->fin || tcph_j->rst || tcph_j->psh || tcph_j->urg ||
-                (tcph_j->ack && dport < 1024)))
-        {
-#if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
-#endif
-            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-            return XDP_DROP;
-        }
-
-        // ---- Step 2: Illegal pure SYN (doff < 6, window == 0, oversized, or spoofed sport) ----
-        // (fin/rst/psh/urg are already guaranteed 0 here because Step 1 ran first.)
-        if (tcph_j->syn && !tcph_j->ack)
+        // ---- Step 1: Illegal pure SYN (doff < 6, window == 0, oversized, or spoofed sport) ----
+        // 1. doff < 6: missing 4B MSS option = raw-socket flood (hping3/ZMap).
+        // 2. window == 0: a brand-new SYN never advertises a 0 receive window.
+        // 3. flen > ceil: oversized SYN beyond max TFO size (604B IPv4 / 624B IPv6).
+        // 4. sport in {20,21,22,23,25,53,80,110,123,143,443}: external clients initiating
+        //    a handshake never allocate privileged service ports as ephemeral source ports
+        //    (catches `nmap -g 53` / `nmap -g 80` / `hping3 -s 80` source-port spoofing).
+        if (tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
+            !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
         {
             u16 flen = data_end - data;
             u16 ceil = iph ? 604 : 624;
@@ -947,6 +800,22 @@ int xdp_prog_main(struct xdp_md *ctx)
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
+        }
+
+        // ---- Step 2: Illegal SYN flag combos & SYN+ACK reflection to privileged ports ----
+        // 1. SYN + FIN/RST/PSH/URG is always illegal.
+        // 2. SYN+ACK targeting dport < 1024 (e.g. 22/80/443): our outbound connections
+        //    always use ephemeral ports (>= 1024), so an incoming SYN+ACK to < 1024 is
+        //    100% a spoofed SYN-ACK reflection/amplification attack!
+        if (tcph_j->syn &&
+            (tcph_j->fin || tcph_j->rst || tcph_j->psh || tcph_j->urg ||
+                (tcph_j->ack && dport < 1024)))
+        {
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
         }
 
         // ---- Step 3: NULL scan (all 6 flags clear) ----
@@ -995,21 +864,145 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
 
     // =========================================================================
-    // Stage 6: UDP Stateless Pre-Filter (Covers Both First & Non-First Fragments!)
+    // Stage 6: UDP Stateless Pre-Filter
     // =========================================================================
 #ifdef ENABLE_UDP_JUNK_FILTER
-    if ((iph && iph->protocol == IPPROTO_UDP) ||
-        (iph6 && nexthdr6 == IPPROTO_UDP))
+    if (!is_nonfirst_frag &&
+        ((iph && iph->protocol == IPPROTO_UDP) ||
+            (iph6 && nexthdr6 == IPPROTO_UDP)))
     {
-        // ---- L3-level UDP checks (apply to ALL fragments, including is_nonfirst_frag == 1) ----
-        // 1. RFC 7126: Drop UDP packets carrying IPv4 Options (ihl > 5).
+        // RFC 7126: Drop UDP packets carrying IPv4 Options (ihl > 5).
         if (unlikely(iph && iph->ihl != 5))
         {
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
 
-        // 2. Multicast/broadcast destination check (with loopback exemption).
+        struct udphdr *udph_j = iph
+            ? (void *)iph + sizeof(struct iphdr)
+            : l4_hdr6;
+
+        // RFC 7112 / Guard Clause: first/unfragmented UDP packet must contain full 8B UDP header.
+        if (unlikely((void *)udph_j + sizeof(struct udphdr) > data_end))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
+        // ---- Step A: UDP length field sanity ----
+        u16 udp_len = ntohs(udph_j->len);
+        u16 l3_len  = 0;
+
+        if (iph)
+        {
+            l3_len = ntohs(iph->tot_len) - sizeof(struct iphdr);
+        }
+#ifdef ENABLE_IPV6
+        else if (iph6)
+        {
+            // If an IPv6 Frag Header (8B) was stripped, subtract 8B from payload_len.
+            u16 ext_len = (u16)((void *)l4_hdr6 - (void *)(iph6 + 1));
+            l3_len = ntohs(iph6->payload_len) - ext_len;
+        }
+#endif
+        if (udp_len < 8 || (!is_frag_pkt && udp_len > l3_len))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
+        u16 dport = ntohs(udph_j->dest);
+        u16 sport = ntohs(udph_j->source);
+
+        // ---- Step B: Port 0 is never valid ----
+        if (dport == 0 || sport == 0)
+        {
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
+        // ---- Step C: UDP checksum mandatory on IPv6 (RFC 8200 §8.1) ----
+        if (iph6 && udph_j->check == 0)
+        {
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
+        // ---- Step D: UDP Reflection / Amplification Source Ports (sport) ----
+        int amp_sport = (
+            sport == 17    ||                  // QOTD (~100x amp)
+            sport == 19    ||                  // Chargen (~358x amp)
+            sport == 68    ||                  // DHCP client
+            sport == 69    ||                  // TFTP
+            sport == 111   ||                  // rpcbind/Portmapper
+            (sport >= 137 && sport <= 138) ||  // NetBIOS
+            sport == 161   ||                  // SNMP
+            sport == 389   ||                  // CLDAP (~56-70x amp)
+            sport == 520   ||                  // RIP
+            sport == 623   ||                  // IPMI
+            sport == 1434  ||                  // MS-SQL Browser
+            sport == 1900  ||                  // UPnP/SSDP
+            sport == 3702  ||                  // WS-Discovery
+            sport == 5353  ||                  // mDNS
+            sport == 5355  ||                  // LLMNR
+            sport == 5683  ||                  // CoAP
+            sport == 11211 ||                  // Memcached (~50000x amp)
+            (sport == 53 && dport < 1024)      // DNS amplification to non-ephemeral port
+        );
+
+        if (amp_sport)
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
+        // ---- Step E: Junk destination ports (dport) ----
+        // 注意本机 net.ipv4.ip_local_reserved_ports 需要预留高端口
+        int junk_port = (
+            dport == 3418  ||                  // IoT M2M
+            dport == 1434  ||                  // MS-SQL Browser
+            dport == 623   ||                  // IPMI
+            dport == 520   ||                  // RIP
+            dport == 53413 ||                  // Netis
+            dport == 17185 ||                  // VxWorks WDB / IoT worm
+            dport == 27015 ||                  // Steam/Source Engine query
+            dport == 64738 ||                  // Mumble
+            dport == 5353  ||                  // mDNS
+            dport == 1900  ||                  // UPnP/SSDP
+            dport == 5355  ||                  // LLMNR
+            dport == 5060  ||                  // SIP
+            dport == 161   ||                  // SNMP
+            dport == 389   ||                  // CLDAP
+            dport == 17    ||                  // QOTD
+            dport == 5683  ||                  // CoAP/LwM2M
+            dport == 69    ||                  // TFTP
+            dport == 19    ||                  // chargen
+            dport == 111   ||                  // rpcbind/Portmapper
+            (dport >= 137 && dport <= 138) ||  // NetBIOS
+            dport == 67    ||                  // DHCP server
+            dport == 21027 ||                  // Syncthing
+            dport == 1968  ||                  // Cisco SLA / scan
+            dport == 4466  ||                  // Common scan port
+            dport == 33445 ||                  // Tailscale
+            dport == 11211 ||                  // memcached
+            0);
+
+        if (junk_port)
+        {
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+
+        // ---- Step F: Multicast/broadcast destination ----
         int junk_dst = 0;
         if (iph)
         {
@@ -1058,138 +1051,6 @@ int xdp_prog_main(struct xdp_md *ctx)
             return XDP_DROP;
 #endif
         }
-
-        // ---- L4-level UDP header checks (for unfragmented & first fragments) ----
-        if (!is_nonfirst_frag)
-        {
-            struct udphdr *udph_j = iph
-                ? (void *)iph + sizeof(struct iphdr)
-                : l4_hdr6;
-
-            // RFC 7112 / Guard Clause: first/unfragmented UDP packet must contain full 8B UDP header.
-            if (unlikely((void *)udph_j + sizeof(struct udphdr) > data_end))
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-
-            // ---- Step A: UDP length field sanity (Both sides of is_frag_pkt closed!) ----
-            //   - Unfragmented (!is_frag_pkt): udp_len must not exceed l3_len.
-            //   - First fragment (is_frag_pkt, MF=1): total udp_len MUST exceed first
-            //     fragment's l3_len (otherwise MF=1 is a lie / fake fragmentation attack!).
-            u16 udp_len = ntohs(udph_j->len);
-            u16 l3_len  = 0;
-
-            if (iph)
-            {
-                l3_len = ntohs(iph->tot_len) - sizeof(struct iphdr);
-            }
-#ifdef ENABLE_IPV6
-            else if (iph6)
-            {
-                u16 ext_len = (u16)((void *)l4_hdr6 - (void *)(iph6 + 1));
-                l3_len = ntohs(iph6->payload_len) - ext_len;
-            }
-#endif
-            if (unlikely(udp_len < 8 ||
-                            (!is_frag_pkt && udp_len > l3_len) ||
-                            (is_frag_pkt  && udp_len <= l3_len)))
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-
-            u16 dport = ntohs(udph_j->dest);
-            u16 sport = ntohs(udph_j->source);
-
-            // ---- Step B: Port 0 is never valid ----
-            if (dport == 0 || sport == 0)
-            {
-#if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
-#endif
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-
-            // ---- Step C: UDP checksum mandatory on IPv6 (RFC 8200 §8.1) ----
-            if (iph6 && udph_j->check == 0)
-            {
-#if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
-#endif
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-
-            // ---- Step D: UDP Reflection / Amplification Source Ports (sport) ----
-            int amp_sport = (
-                sport == 17    ||                  // QOTD (~100x amp)
-                sport == 19    ||                  // Chargen (~358x amp)
-                sport == 68    ||                  // DHCP client
-                sport == 69    ||                  // TFTP
-                sport == 111   ||                  // rpcbind/Portmapper
-                (sport >= 137 && sport <= 138) ||  // NetBIOS
-                sport == 161   ||                  // SNMP
-                sport == 389   ||                  // CLDAP (~56-70x amp)
-                sport == 520   ||                  // RIP
-                sport == 623   ||                  // IPMI
-                sport == 1434  ||                  // MS-SQL Browser
-                sport == 1900  ||                  // UPnP/SSDP
-                sport == 3702  ||                  // WS-Discovery
-                sport == 5353  ||                  // mDNS
-                sport == 5355  ||                  // LLMNR
-                sport == 5683  ||                  // CoAP
-                sport == 11211 ||                  // Memcached (~50000x amp)
-                (sport == 53 && dport < 1024)      // DNS amplification to non-ephemeral port
-            );
-
-            if (amp_sport)
-            {
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-
-            // ---- Step E: Junk destination ports (dport) ----
-            // 注意本机 net.ipv4.ip_local_reserved_ports 需要预留高端口
-            int junk_port = (
-                dport == 3418  ||                  // IoT M2M
-                dport == 1434  ||                  // MS-SQL Browser
-                dport == 623   ||                  // IPMI
-                dport == 520   ||                  // RIP
-                dport == 53413 ||                  // Netis
-                dport == 17185 ||                  // VxWorks WDB / IoT worm
-                dport == 27015 ||                  // Steam/Source Engine query
-                dport == 64738 ||                  // Mumble
-                dport == 5353  ||                  // mDNS
-                dport == 1900  ||                  // UPnP/SSDP
-                dport == 5355  ||                  // LLMNR
-                dport == 5060  ||                  // SIP
-                dport == 161   ||                  // SNMP
-                dport == 389   ||                  // CLDAP
-                dport == 17    ||                  // QOTD
-                dport == 5683  ||                  // CoAP/LwM2M
-                dport == 69    ||                  // TFTP
-                dport == 19    ||                  // chargen
-                dport == 111   ||                  // rpcbind/Portmapper
-                (dport >= 137 && dport <= 138) ||  // NetBIOS
-                dport == 67    ||                  // DHCP server
-                dport == 21027 ||                  // Syncthing
-                dport == 1968  ||                  // Cisco SLA / scan
-                dport == 4466  ||                  // Common scan port
-                dport == 33445 ||                  // Tailscale
-                dport == 11211 ||                  // memcached
-                0);
-
-            if (junk_port)
-            {
-#if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
-#endif
-                inc_pkt_stats(stats, STATS_TYPE_DROPPED);
-                return XDP_DROP;
-            }
-        }
     }
 #endif
 
@@ -1217,8 +1078,8 @@ if (iph)
     protocol = iph->protocol;
 
     // Only parse L4 headers on first fragment or unfragmented packets (is_nonfirst_frag == 0).
-    // Non-first UDP fragments keep udph == NULL so payload bytes are never misread as ports,
-    // while IP-level rate limiting (update_ip_stats) and IP rules still execute below!
+    // Non-first fragments keep tcph/udph/icmph == NULL so payload bytes are never misread
+    // as L4 ports/flags, while IP-level rate limiting and IP rules still execute below!
     if (!is_nonfirst_frag)
     {
 
