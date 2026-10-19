@@ -228,6 +228,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             is_nonfirst_frag = (offset_bytes > 0);
             is_frag_pkt      = 1;
         }
+    }
 
 #ifdef ENABLE_ARP_FILTER
     // ARP filter: strictly validate Ethernet/IPv4 ARP and only allow ARP targeting our IP.
