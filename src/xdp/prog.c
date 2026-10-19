@@ -819,7 +819,8 @@ int xdp_prog_main(struct xdp_md *ctx)
         }
 
         // ---- Step 5a: RST combined with FIN/PSH/URG, or URG=1 with urg_ptr==0 ----
-        if ((tcph_j->rst && (tcph_j->fin || tcph_j->psh || tcph_j->urg)) ||
+        // if ((tcph_j->rst && (tcph_j->fin || tcph_j->psh || tcph_j->urg)) ||
+        if ((tcph_j->rst && (tcph_j->fin || tcph_j->urg)) ||
             (tcph_j->urg && tcph_j->urg_ptr == 0))
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
