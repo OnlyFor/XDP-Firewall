@@ -189,7 +189,8 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (unlikely(iph->version != 4 ||
                         iph->ihl < 5 ||
                         tot_len < ihl_len ||
-                        (void *)iph + tot_len > data_end ||
+                        // (void *)iph + tot_len > data_end ||
+                        (void *)iph + ihl_len > data_end ||
                         s_msb == 0 || s_msb == 127 || d_msb == 127 || s_msb >= 0xE0 ||
                         iph->saddr == iph->daddr ||
                         iph->protocol == IPPROTO_ICMPV6 ||
@@ -275,7 +276,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         // Validate outer IPv6 header BEFORE inspecting extension headers so
         // (iph6 + 1) + plen <= data_end is already guaranteed.
         if (unlikely(iph6->version != 6 ||
-                        (void *)(iph6 + 1) + plen > data_end ||
+                        // (void *)(iph6 + 1) + plen > data_end ||
                         s6_msb == 0xff ||
                         (__builtin_memcmp(&src_ip6, &dst_ip6, sizeof(src_ip6)) == 0)))
         {
@@ -591,7 +592,8 @@ int xdp_prog_main(struct xdp_md *ctx)
                 u32 zero = 0;
                 u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
 
-                if (ndp_enabled && *ndp_enabled)
+                // if (ndp_enabled && *ndp_enabled)
+                if (type == 135 && ndp_enabled && *ndp_enabled)
                 {
                     // u128 ndp_target;
                     // __builtin_memcpy(&ndp_target, (u8 *)icmp6_hdr + 8, sizeof(ndp_target));
@@ -831,7 +833,8 @@ int xdp_prog_main(struct xdp_md *ctx)
         }
 
         // ---- Step 5b: Illegal CWR on handshake packets (RFC 3168 §6.1.1) ----
-        if (tcph_j->syn && tcph_j->cwr && (tcph_j->ack || !tcph_j->ece))
+        // if (tcph_j->syn && tcph_j->cwr && (tcph_j->ack || !tcph_j->ece))
+        if (tcph_j->syn && tcph_j->cwr && (!tcph_j->ack && !tcph_j->ece))
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
             junk_block_src(iph, iph6, &src_ip6, now);
