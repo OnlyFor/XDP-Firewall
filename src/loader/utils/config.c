@@ -374,13 +374,18 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
     if (setting && config_setting_is_list(setting))
     {
+        cfg->my_ips_cnt = 0;
         for (int i = 0; i < config_setting_length(setting) && i < MAX_MY_IPS; i++)
         {
             const char* ip_str = config_setting_get_string_elem(setting, i);
 
             if (ip_str)
             {
-                cfg->my_ips[i] = strdup(ip_str);
+                if (cfg->my_ips[cfg->my_ips_cnt])
+                {
+                    free(cfg->my_ips[cfg->my_ips_cnt]);
+                }
+                cfg->my_ips[cfg->my_ips_cnt] = strdup(ip_str);
                 cfg->my_ips_cnt++;
             }
         }
@@ -390,13 +395,18 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
     if (setting && config_setting_is_list(setting))
     {
+        cfg->my_ip6s_cnt = 0;
         for (int i = 0; i < config_setting_length(setting) && i < MAX_MY_IP6S; i++)
         {
             const char* ip6_str = config_setting_get_string_elem(setting, i);
 
             if (ip6_str)
             {
-                cfg->my_ip6s[i] = strdup(ip6_str);
+                if (cfg->my_ip6s[cfg->my_ip6s_cnt])
+                {
+                    free(cfg->my_ip6s[cfg->my_ip6s_cnt]);
+                }
+                cfg->my_ip6s[cfg->my_ip6s_cnt] = strdup(ip6_str);
                 cfg->my_ip6s_cnt++;
             }
         }
@@ -409,13 +419,19 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
     {
         for (int i = 0; i < config_setting_length(setting); i++)
         {
+            if (i >= MAX_FILTERS)
+            {
+                log_msg(cfg, 0, 1, "[WARNING] Exceeded maximum filters allowed (%d). Ignoring remaining rules...", MAX_FILTERS);
+                break;
+            }
+
             filter_rule_cfg_t* filter = &cfg->filters[i];
 
             config_setting_t* filter_cfg = config_setting_get_elem(setting, i);
 
-            if (filter == NULL || filter_cfg == NULL)
+            if (filter_cfg == NULL)
             {
-                log_msg(cfg, 0, 1, "[WARNING] Failed to read filter rule at index #%d. 'filter' or 'filter_cfg' is NULL (make sure you didn't exceed the maximum filters allowed!)...");
+                log_msg(cfg, 0, 1, "[WARNING] Failed to read filter rule at index #%d.", i);
 
                 continue;
             }

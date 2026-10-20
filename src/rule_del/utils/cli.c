@@ -8,7 +8,7 @@ const struct option opts[] =
     { "save", no_argument, NULL, 's' },
 
     { "mode", required_argument, NULL, 'm' },
-    
+
     { "idx", required_argument, NULL, 'i' },
     { "ip", required_argument, NULL, 'd' },
     { "v6", no_argument, NULL, 'v' },
@@ -20,7 +20,7 @@ void parse_cli(cli_t* cli, int argc, char* argv[])
 {
     int c;
 
-    while ((c = getopt_long(argc, argv, "c:lhm:i:rsv", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "c:lhm:i:d:rsv", opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -58,7 +58,7 @@ void parse_cli(cli_t* cli, int argc, char* argv[])
                 cli->v6 = 1;
 
                 break;
-            
+
             case '?':
                 fprintf(stderr, "Missing argument option...\n");
 

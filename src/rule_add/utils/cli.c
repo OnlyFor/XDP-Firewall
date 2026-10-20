@@ -64,7 +64,7 @@ void parse_cli(cli_t* cli, int argc, char* argv[])
 {
     int c;
 
-    while ((c = getopt_long(argc, argv, "c:lhm:i:rsv", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "c:lhm:i:d:e:rsv", opts, NULL)) != -1)
     {
         switch (c)
         {

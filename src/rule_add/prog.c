@@ -368,6 +368,11 @@ int main(int argc, char *argv[])
         // Set filter at index.
         cfg.filters[idx] = new_filter;
 
+        if (idx >= cfg.filters_cnt)
+        {
+            cfg.filters_cnt = idx + 1;
+        }
+
         // Update filters.
         fprintf(stdout, "Updating filters (index %d)...\n", idx);
 
