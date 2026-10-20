@@ -990,8 +990,8 @@ int xdp_prog_main(struct xdp_md *ctx)
                 sport == 5355  ||                  // LLMNR
                 sport == 5683  ||                  // CoAP
                 sport == 11211 ||                  // Memcached (~50000x amp)
-                (sport == 53 && dport < 1024)      // DNS amplification to non-ephemeral port
-            );
+                // (sport == 53 && dport < 1024) ||      // DNS amplification to non-ephemeral port
+                0);
 
             if (amp_sport)
             {
