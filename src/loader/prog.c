@@ -230,7 +230,7 @@ int main(int argc, char *argv[])
         // Get interface index.
         if_idx[i] = if_nametoindex(interface);
 
-        if (if_idx[i] < 0)
+        if (if_idx[i] <= 0)
         {
             log_msg(&cfg, 0, 1, "[WARNING] Failed to retrieve index of network interface '%s'.\n", interface);
 
@@ -570,6 +570,59 @@ int main(int argc, char *argv[])
                     // Update filters.
                     update_filters(map_filters, &cfg);
 #endif
+
+#ifdef ENABLE_ARP_FILTER
+                    if (map_arp_enabled > -1 && map_my_ip > -1)
+                    {
+                        int written = 0;
+                        for (int i = 0; i < cfg.my_ips_cnt; i++)
+                        {
+                            u32 ip = inet_addr(cfg.my_ips[i]);
+                            if (ip == INADDR_NONE) continue;
+                            u8 val = 1;
+                            if (bpf_map_update_elem(map_my_ip, &ip, &val, BPF_ANY) == 0)
+                            {
+                                written++;
+                            }
+                        }
+                        u32 zero = 0;
+                        u32 enabled = (written > 0) ? 1 : 0;
+                        bpf_map_update_elem(map_arp_enabled, &zero, &enabled, BPF_ANY);
+                    }
+#endif
+
+#ifdef ENABLE_NDP_FILTER
+                    if (map_ndp_enabled > -1 && map_my_ip6 > -1)
+                    {
+                        int written = 0;
+                        for (int i = 0; i < cfg.my_ip6s_cnt; i++)
+                        {
+                            struct in6_addr addr6;
+                            if (inet_pton(AF_INET6, cfg.my_ip6s[i], &addr6) == 1)
+                            {
+                                u8 val = 1;
+                                if (bpf_map_update_elem(map_my_ip6, addr6.s6_addr, &val, BPF_ANY) == 0)
+                                {
+                                    written++;
+                                }
+                            }
+                        }
+                        u32 zero = 0;
+                        u32 enabled = (written > 0) ? 1 : 0;
+                        bpf_map_update_elem(map_ndp_enabled, &zero, &enabled, BPF_ANY);
+                    }
+#endif
+
+#ifdef ENABLE_IP_RANGE_DROP
+                    if (map_range_drop > -1)
+                    {
+                        update_range_drops(map_range_drop, &cfg);
+                    }
+#endif
+
+                    // Update last check timer only on successful reload
+                    last_config_check = conf_stat.st_mtime;
+
                 }
 
                 // Update last check timer
@@ -612,7 +665,7 @@ int main(int argc, char *argv[])
     {
         const char* interface = cfg.interfaces[i];
 
-        if (!interface)
+        if (!interface || if_idx[i] <= 0)
         {
             continue;
         }

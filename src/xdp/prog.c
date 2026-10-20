@@ -332,7 +332,8 @@ int xdp_prog_main(struct xdp_md *ctx)
                 // 5. Tiny/overlapping non-first fragment (offset_bytes > 0 && offset_bytes < 256).
                 if (unlikely(nexthdr6 != IPPROTO_UDP ||
                                 (mf6 && (frag_plen & 7)) ||
-                                ((u32)offset_bytes + 40 + frag_plen > 65535) ||
+                                // ((u32)offset_bytes + 40 + frag_plen > 65535) ||
+                                ((u32)offset_bytes + frag_plen > 65535) ||
                                 (offset_bytes == 0 && frag_plen < 256) ||
                                 (offset_bytes > 0 && offset_bytes < 256)))
                 {
@@ -364,11 +365,11 @@ int xdp_prog_main(struct xdp_md *ctx)
         // multicast (ff02::) as outer dst_ip6 and carries the target IP inside the payload.
         if (nexthdr6 != IPPROTO_ICMPV6)
         {
-            u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
-            u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
-            int is_link_local_dst = (d0 == 0xfe && (d1 & 0xc0) == 0x80);
-
-            if (!is_link_local_dst)
+            // my_ip6 must contains fe80:
+            // u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
+            // u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
+            // int is_link_local_dst = (d0 == 0xfe && (d1 & 0xc0) == 0x80);
+            // if (!is_link_local_dst)
             {
                 u32 zero = 0;
                 u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
@@ -592,6 +593,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 u32 zero = 0;
                 u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
 
+                // my_ip6 must contains fe80:
                 // if (ndp_enabled && *ndp_enabled)
                 if (type == 135 && ndp_enabled && *ndp_enabled)
                 {
@@ -623,9 +625,10 @@ int xdp_prog_main(struct xdp_md *ctx)
                 return XDP_DROP;
             }
 
-            u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
-            u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
-            if (!(d0 == 0xfe && (d1 & 0xc0) == 0x80))
+            // my_ip6 must contains fe80:
+            // u8 d0 = iph6->daddr.in6_u.u6_addr8[0];
+            // u8 d1 = iph6->daddr.in6_u.u6_addr8[1];
+            // if (!(d0 == 0xfe && (d1 & 0xc0) == 0x80))
             {
                 u32 zero = 0;
                 u32 *ndp_enabled = bpf_map_lookup_elem(&map_ndp_enabled, &zero);
@@ -931,6 +934,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             //     fragment's l3_len (otherwise MF=1 is a lie / fake fragmentation attack!).
             u16 udp_len = ntohs(udph_j->len);
             u16 l3_len  = 0;
+            u16 linear_len = (u16)((void *)data_end - (void *)udph_j);
 
             if (iph)
             {
@@ -943,9 +947,14 @@ int xdp_prog_main(struct xdp_md *ctx)
                 l3_len = ntohs(iph6->payload_len) - ext_len;
             }
 #endif
+            // 1. udp_len 必须 >= 8；
+            // 2. 非分片包 udp_len 不能超过 IP 头声明的 l3_len；首片包 udp_len 必须大于首片 l3_len；
+            // 3. 防伪造 tot_len/payload_len：若非分片包且总帧长未达跨页阈值 (< 1500B)，实际线性区长度必须容纳 l3_len。
             if (unlikely(udp_len < 8 ||
                             (!is_frag_pkt && udp_len > l3_len) ||
-                            (is_frag_pkt  && udp_len <= l3_len)))
+                            // (is_frag_pkt  && udp_len <= l3_len)))
+                            (is_frag_pkt  && udp_len <= l3_len) ||
+                            (!is_frag_pkt && (data_end - data) < 1500 && l3_len > linear_len)))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;

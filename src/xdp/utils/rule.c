@@ -69,7 +69,7 @@ static __always_inline long process_rule(u32 idx, void* data)
                 return 0;
             }
 
-            if (!is_ip_in_range(ctx->iph->saddr, filter->ip.src_ip, filter->ip.src_cidr))
+            else if (!is_ip_in_range(ctx->iph->saddr, filter->ip.src_ip, filter->ip.src_cidr))
             {
                 return 0;
             }
@@ -83,7 +83,7 @@ static __always_inline long process_rule(u32 idx, void* data)
                 return 0;
             }
 
-            if (!is_ip_in_range(ctx->iph->daddr, filter->ip.dst_ip, filter->ip.dst_cidr))
+            else if (!is_ip_in_range(ctx->iph->daddr, filter->ip.dst_ip, filter->ip.dst_cidr))
             {
                 return 0;
             }

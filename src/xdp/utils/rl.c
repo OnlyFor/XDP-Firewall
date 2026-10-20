@@ -5,13 +5,13 @@
 #ifdef ENABLE_RL_IP
 /**
  * Updates source IPv4 address stats.
- * 
+ *
  * @param pps A pointer to the PPS integer.
  * @param bps A pointer to the BPS integer.
  * @param ip The client's source IP.
  * @param pkt_len The total packet length.
  * @param now The current time since boot in nanoseconds.alignas
- * 
+ *
  * @return always 0
  */
 static __always_inline int update_ip_stats(u64 *pps, u64 *bps, u32 ip, u16 pkt_len, u64 now)
@@ -26,16 +26,18 @@ static __always_inline int update_ip_stats(u64 *pps, u64 *bps, u32 ip, u16 pkt_l
             stats->pps = 1;
             stats->bps = pkt_len;
             stats->next_update = now + NANO_TO_SEC;
+            *pps = 1;
+            *bps = pkt_len;
         }
         else
         {
             // Increment PPS and BPS using built-in functions.
-            __sync_fetch_and_add(&stats->pps, 1);
-            __sync_fetch_and_add(&stats->bps, pkt_len);
+            *pps = __sync_add_and_fetch(&stats->pps, 1);
+            *bps = __sync_add_and_fetch(&stats->bps, pkt_len);
         }
 
-        *pps = stats->pps;
-        *bps = stats->bps;
+        // *pps = stats->pps;
+        // *bps = stats->bps;
     }
     else
     {
@@ -58,13 +60,13 @@ static __always_inline int update_ip_stats(u64 *pps, u64 *bps, u32 ip, u16 pkt_l
 #ifdef ENABLE_IPV6
 /**
  * Updates source IPv6 address stats.
- * 
+ *
  * @param pps A pointer to the PPS integer.
  * @param bps A pointer to the BPS integer.
  * @param ip The client's source IP.
  * @param pkt_len The total packet length.
  * @param now The current time since boot in nanoseconds.alignas
- * 
+ *
  * @return always 0
  */
 static __always_inline int update_ip6_stats(u64 *pps, u64 *bps, u128 *ip, u16 pkt_len, u64 now)
@@ -79,16 +81,18 @@ static __always_inline int update_ip6_stats(u64 *pps, u64 *bps, u128 *ip, u16 pk
             stats->pps = 1;
             stats->bps = pkt_len;
             stats->next_update = now + NANO_TO_SEC;
+            *pps = 1;
+            *bps = pkt_len;
         }
         else
         {
             // Increment PPS and BPS using built-in functions.
-            __sync_fetch_and_add(&stats->pps, 1);
-            __sync_fetch_and_add(&stats->bps, pkt_len);
+            *pps = __sync_add_and_fetch(&stats->pps, 1);
+            *bps = __sync_add_and_fetch(&stats->bps, pkt_len);
         }
 
-        *pps = stats->pps;
-        *bps = stats->bps;
+        // *pps = stats->pps;
+        // *bps = stats->bps;
     }
     else
     {
@@ -113,7 +117,7 @@ static __always_inline int update_ip6_stats(u64 *pps, u64 *bps, u128 *ip, u16 pk
 #ifdef ENABLE_RL_FLOW
 /**
  * Updates IPv4 flow stats.
- * 
+ *
  * @param pps A pointer to the PPS integer.
  * @param bps A pointer to the BPS integer.
  * @param ip The client's source IP.
@@ -121,7 +125,7 @@ static __always_inline int update_ip6_stats(u64 *pps, u64 *bps, u128 *ip, u16 pk
  * @param protocol The client's protocol.
  * @param pkt_len The total packet length.
  * @param now The current time since boot in nanoseconds.
- * 
+ *
  * @return always 0
  */
 static __always_inline int update_flow_stats(u64 *pps, u64 *bps, u32 ip, u16 port, u8 protocol, u16 pkt_len, u64 now)
@@ -141,16 +145,18 @@ static __always_inline int update_flow_stats(u64 *pps, u64 *bps, u32 ip, u16 por
             stats->pps = 1;
             stats->bps = pkt_len;
             stats->next_update = now + NANO_TO_SEC;
+            *pps = 1;
+            *bps = pkt_len;
         }
         else
         {
             // Increment PPS and BPS using built-in functions.
-            __sync_fetch_and_add(&stats->pps, 1);
-            __sync_fetch_and_add(&stats->bps, pkt_len);
+            *pps = __sync_add_and_fetch(&stats->pps, 1);
+            *bps = __sync_add_and_fetch(&stats->bps, pkt_len);
         }
 
-        *pps = stats->pps;
-        *bps = stats->bps;
+        // *pps = stats->pps;
+        // *bps = stats->bps;
     }
     else
     {
@@ -173,7 +179,7 @@ static __always_inline int update_flow_stats(u64 *pps, u64 *bps, u32 ip, u16 por
 #ifdef ENABLE_IPV6
 /**
  * Updates IPv6 flow stats.
- * 
+ *
  * @param pps A pointer to the PPS integer.
  * @param bps A pointer to the BPS integer.
  * @param ip The client's source IP.
@@ -181,7 +187,7 @@ static __always_inline int update_flow_stats(u64 *pps, u64 *bps, u32 ip, u16 por
  * @param protocol The client's protocol.
  * @param pkt_len The total packet length.
  * @param now The current time since boot in nanoseconds.
- * 
+ *
  * @return always 0
  */
 static __always_inline int update_flow6_stats(u64 *pps, u64 *bps, u128 *ip, u16 port, u8 protocol, u16 pkt_len, u64 now)
@@ -201,16 +207,18 @@ static __always_inline int update_flow6_stats(u64 *pps, u64 *bps, u128 *ip, u16 
             stats->pps = 1;
             stats->bps = pkt_len;
             stats->next_update = now + NANO_TO_SEC;
+            *pps = 1;
+            *bps = pkt_len;
         }
         else
         {
             // Increment PPS and BPS using built-in functions.
-            __sync_fetch_and_add(&stats->pps, 1);
-            __sync_fetch_and_add(&stats->bps, pkt_len);
+            *pps = __sync_add_and_fetch(&stats->pps, 1);
+            *bps = __sync_add_and_fetch(&stats->bps, pkt_len);
         }
 
-        *pps = stats->pps;
-        *bps = stats->bps;
+        // *pps = stats->pps;
+        // *bps = stats->bps;
     }
     else
     {
