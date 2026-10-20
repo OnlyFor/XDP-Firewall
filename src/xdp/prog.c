@@ -606,7 +606,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                         // Here <ndp_target> is the gateway's IP, so we check that the outer
                         // destination (dst_ip6) is in map_my_ip6 (global or our fe80::xxxx).
                         // u8 *found = bpf_map_lookup_elem(&map_my_ip6, &dst_ip6);
-                        if (!bpf_map_lookup_elem(&map_my_ip6, &dst_ip6))
+                        if (!bpf_map_lookup_elem(&map_my_ip6, &dst_ip6);)
                         {
                             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                             return XDP_DROP;
@@ -663,10 +663,11 @@ int xdp_prog_main(struct xdp_md *ctx)
             }
 
             struct ipv6hdr *inner_iph6 = (struct ipv6hdr *)(icmp6_hdr + 1);
-            u128 inner_src6 = 0;
-            __builtin_memcpy(&inner_src6, inner_iph6->saddr.in6_u.u6_addr32, sizeof(inner_src6));
+            // u128 inner_src6 = 0;
+            // __builtin_memcpy(&inner_src6, inner_iph6->saddr.in6_u.u6_addr32, sizeof(inner_src6));
 
-            if (unlikely(inner_iph6->version != 6 || inner_src6 != dst_ip6))
+            // if (unlikely(inner_iph6->version != 6 || inner_src6 != dst_ip6))
+            if (unlikely(inner_iph6->version != 6 || inner_iph6->saddr.in6_u.u6_addr32 != dst_ip6))
             {
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
