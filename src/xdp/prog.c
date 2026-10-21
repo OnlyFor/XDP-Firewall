@@ -769,7 +769,7 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         // ---- Step 1: Illegal SYN flag combos & SYN+ACK reflection to privileged ports ----
         if (tcph_j->syn &&
-            (tcph_j->fin || tcph_j->rst || tcph_j->psh || tcph_j->urg ||
+            (tcph_j->fin || tcph_j->rst || tcph_j->urg ||
                 (tcph_j->ack && dport < 1024)))
         {
 // #if JUNK_FILTER_BLOCK_TIME > 0
