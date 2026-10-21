@@ -513,11 +513,18 @@ int xdp_prog_main(struct xdp_md *ctx)
         //   - Type 11  (Time Exceeded):      code 0..1
         //   - Type 12  (Parameter Problem):  code 0..2
         // Drops Timestamp (13/14), Info (15/16), Address Mask (17/18), Redirect (5), Source Quench (4)
+
+        // int valid_icmp4 =
+        //     ((type == 0 || type == 8) && code == 0) ||
+        //     (type == 3  && code <= 15) ||
+        //     (type == 11 && code <= 1)  ||
+        //     (type == 12 && code <= 2);
         int valid_icmp4 =
-            ((type == 0 || type == 8) && code == 0) ||
-            (type == 3  && code <= 15) ||
-            (type == 11 && code <= 1)  ||
-            (type == 12 && code <= 2);
+                (type == 0  && code == 0) ||
+                (type == 8  && code == 0 && ntohs(iph->tot_len) <= 256) ||
+                (type == 3  && code <= 15) ||
+                (type == 11 && code <= 1)  ||
+                (type == 12 && code <= 2);
 
         if (unlikely(!valid_icmp4))
         {
@@ -612,8 +619,14 @@ int xdp_prog_main(struct xdp_md *ctx)
         // ---- Case B: Non-NDP ICMPv6 (Errors 1..4 & Echo 128/129) ----
         else
         {
+            // int valid_icmp6 =
+            //     ((type == 128 || type == 129 || type == 2) && code == 0) ||
+            //     (type == 1 && code <= 6) ||
+            //     (type == 3 && code <= 1) ||
+            //     (type == 4 && code <= 2);
             int valid_icmp6 =
-                ((type == 128 || type == 129 || type == 2) && code == 0) ||
+                ((type == 129 || type == 2) && code == 0) ||
+                (type == 128 && code == 0 && ntohs(iph6->payload_len) <= 256) ||
                 (type == 1 && code <= 6) ||
                 (type == 3 && code <= 1) ||
                 (type == 4 && code <= 2);
@@ -679,10 +692,21 @@ int xdp_prog_main(struct xdp_md *ctx)
             ? (void *)iph + sizeof(struct iphdr)
             : l4_hdr6;
 
-        // Guard Clause: TCP packet MUST contain full 20B header AND full options (doff * 4).
-        if (unlikely((void *)tcph_j + sizeof(struct tcphdr) > data_end ||
-                        tcph_j->doff < 5 ||
-                        (void *)tcph_j + (tcph_j->doff * 4) > data_end))
+        // Guard Clause:
+        //   1. Full 20B header AND full options (doff * 4) must fit inside linear buffer;
+        //   2. L3 total/payload length must actually cover the TCP header (defeats 60B Ethernet zero-padding);
+        //   3. Strict reserved bits (upper 3 bits of res1, 0x0E) must be 0 (blocks Nmap -O OS fingerprint probes).
+        if (unlikely((void *)tcph_j + sizeof(struct tcphdr) > data_end))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+        u16 tcp_hlen = (u16)tcph_j->doff * 4;
+        if (unlikely(tcph_j->doff < 5 ||
+                        (void *)tcph_j + tcp_hlen > data_end ||
+                        (iph  && ntohs(iph->tot_len) < sizeof(struct iphdr) + tcp_hlen) ||
+                        (iph6 && ntohs(iph6->payload_len) < tcp_hlen) ||
+                        (tcph_j->res1 & 0x0E) != 0))
         {
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -825,7 +849,12 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         // ---- Step 5a: RST combined with FIN/PSH/URG, or URG=1 with urg_ptr==0 ----
         // if ((tcph_j->rst && (tcph_j->fin || tcph_j->psh || tcph_j->urg)) ||
+        // if ((tcph_j->rst && (tcph_j->fin || tcph_j->urg)) ||
+        //     (tcph_j->urg && tcph_j->urg_ptr == 0))
+        // {
+        // ---- Step 5a: RST with FIN/URG, FIN with URG (ACK-Xmas scan), or URG=1 with urg_ptr==0 ----
         if ((tcph_j->rst && (tcph_j->fin || tcph_j->urg)) ||
+            (tcph_j->fin && tcph_j->urg) ||
             (tcph_j->urg && tcph_j->urg_ptr == 0))
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
