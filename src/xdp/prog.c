@@ -188,6 +188,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         // 4. RFC 3514: Reserved bit (0x8000 "Evil Bit") in frag_off MUST be 0.
         if (unlikely(iph->version != 4 ||
                         iph->ihl < 5 ||
+                        iph->ttl == 0 ||
                         tot_len < ihl_len ||
                         // (void *)iph + tot_len > data_end ||
                         (void *)iph + ihl_len > data_end ||
@@ -826,6 +827,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         // ---- Step 5a: RST combined with FIN/PSH/URG, or URG=1 with urg_ptr==0 ----
         // if ((tcph_j->rst && (tcph_j->fin || tcph_j->psh || tcph_j->urg)) ||
         if ((tcph_j->rst && (tcph_j->fin || tcph_j->urg)) ||
+            (tcph_j->fin && tcph_j->urg) ||
             (tcph_j->urg && tcph_j->urg_ptr == 0))
         {
 // #if JUNK_FILTER_BLOCK_TIME > 0
@@ -1002,6 +1004,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 sport == 5355  ||                  // LLMNR
                 sport == 5683  ||                  // CoAP
                 sport == 11211 ||                  // Memcached (~50000x amp)
+                (sport == 53 && dport < 1024 && dport != 53) || // DNS amp to non-DNS privileged ports
                 // (sport == 53 && dport < 1024) ||      // DNS amplification to non-ephemeral port
                 0);
 
@@ -1042,7 +1045,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 dport == 11211 ||                  // memcached
                 0);
 
-            if (junk_port)
+            if (junk_port && sport != 53)
             {
 // #if JUNK_FILTER_BLOCK_TIME > 0
 //                 junk_block_src(iph, iph6, &src_ip6, now);
