@@ -787,7 +787,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             u16 ceil = iph ? 604 : 624;
             int spoofed_syn_sport = (
                 sport == 20 || sport == 21 || sport == 22  || sport == 23  ||
-                sport == 25 || (sport == 53 && dport != 53) || sport == 80  || sport == 110 ||
+                sport == 25 || sport == 53 || sport == 80  || sport == 110 ||
                 sport == 123 || sport == 143 || sport == 443
             );
 
