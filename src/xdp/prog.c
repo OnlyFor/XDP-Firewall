@@ -771,9 +771,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             (tcph_j->fin || tcph_j->rst || tcph_j->psh || tcph_j->urg ||
                 (tcph_j->ack && dport < 1024)))
         {
-#if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
-#endif
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//             junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -793,9 +793,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             if (tcph_j->doff < 6 || tcph_j->window == 0 ||
                 flen > ceil || spoofed_syn_sport)
             {
-#if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
-#endif
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//                 junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
@@ -805,9 +805,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (!tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
             !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
         {
-#if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
-#endif
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//             junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -816,9 +816,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (!tcph_j->syn && !tcph_j->ack && !tcph_j->rst &&
             (tcph_j->fin || tcph_j->psh || tcph_j->urg))
         {
-#if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
-#endif
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//             junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -828,9 +828,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         if ((tcph_j->rst && (tcph_j->fin || tcph_j->urg)) ||
             (tcph_j->urg && tcph_j->urg_ptr == 0))
         {
-#if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
-#endif
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//             junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -839,9 +839,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         // if (tcph_j->syn && tcph_j->cwr && (tcph_j->ack || !tcph_j->ece))
         if (tcph_j->syn && tcph_j->cwr && (!tcph_j->ack && !tcph_j->ece))
         {
-#if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
-#endif
+// #if JUNK_FILTER_BLOCK_TIME > 0
+//             junk_block_src(iph, iph6, &src_ip6, now);
+// #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
