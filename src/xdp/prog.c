@@ -1004,7 +1004,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 sport == 5355  ||                  // LLMNR
                 sport == 5683  ||                  // CoAP
                 sport == 11211 ||                  // Memcached (~50000x amp)
-                (sport == 53 && dport < 1024 && dport != 53) || // DNS amp to non-DNS privileged ports
+                // (sport == 53 && dport < 1024 && dport != 53) || // DNS amp to non-DNS privileged ports
                 // (sport == 53 && dport < 1024) ||      // DNS amplification to non-ephemeral port
                 0);
 
@@ -1045,7 +1045,8 @@ int xdp_prog_main(struct xdp_md *ctx)
                 dport == 11211 ||                  // memcached
                 0);
 
-            if (junk_port && sport != 53)
+            // if (junk_port && sport != 53)
+            if (junk_port)
             {
 #if JUNK_FILTER_BLOCK_TIME > 0
                 junk_block_src(iph, iph6, &src_ip6, now);
