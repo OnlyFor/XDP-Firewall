@@ -770,7 +770,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         // ---- Step 1: Illegal SYN flag combos & SYN+ACK reflection to privileged ports ----
         if (tcph_j->syn &&
             (tcph_j->fin || tcph_j->rst || tcph_j->urg ||
-                (tcph_j->ack && dport < 1024)))
+                (tcph_j->ack && dport < 1024 && dport != 53)))
         {
 // #if JUNK_FILTER_BLOCK_TIME > 0
 //             junk_block_src(iph, iph6, &src_ip6, now);
@@ -787,7 +787,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             u16 ceil = iph ? 604 : 624;
             int spoofed_syn_sport = (
                 sport == 20 || sport == 21 || sport == 22  || sport == 23  ||
-                sport == 25 || sport == 53 || sport == 80  || sport == 110 ||
+                sport == 25 || (sport == 53 && dport != 53) || sport == 80  || sport == 110 ||
                 sport == 123 || sport == 143 || sport == 443
             );
 
