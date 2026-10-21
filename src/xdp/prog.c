@@ -514,8 +514,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         //   - Type 12  (Parameter Problem):  code 0..2
         // Drops Timestamp (13/14), Info (15/16), Address Mask (17/18), Redirect (5), Source Quench (4)
         int valid_icmp4 =
-            (type == 0  && code == 0) ||
-            (type == 8  && code == 0 && (data_end - data) <= 300) ||
+            ((type == 0 || type == 8) && code == 0) ||
             (type == 3  && code <= 15) ||
             (type == 11 && code <= 1)  ||
             (type == 12 && code <= 2);
@@ -614,8 +613,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         else
         {
             int valid_icmp6 =
-                ((type == 129 || type == 2) && code == 0) ||
-                (type == 128 && code == 0 && (data_end - data) <= 300) ||
+                ((type == 128 || type == 129 || type == 2) && code == 0) ||
                 (type == 1 && code <= 6) ||
                 (type == 3 && code <= 1) ||
                 (type == 4 && code <= 2);
