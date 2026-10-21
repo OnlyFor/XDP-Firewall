@@ -87,7 +87,7 @@ static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* ip
         {
 #if defined(ENABLE_NDP_FILTER)
             // u8 *own6 = bpf_map_lookup_elem(&map_my_ip6, src_ip6);
-            if (!bpf_map_lookup_elem(&map_my_ip6, src_ip6);)
+            if (!bpf_map_lookup_elem(&map_my_ip6, src_ip6))
 #endif
             {
                 u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
