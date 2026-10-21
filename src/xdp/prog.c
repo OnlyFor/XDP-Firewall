@@ -692,10 +692,21 @@ int xdp_prog_main(struct xdp_md *ctx)
             ? (void *)iph + sizeof(struct iphdr)
             : l4_hdr6;
 
-        // Guard Clause: TCP packet MUST contain full 20B header AND full options (doff * 4).
-        if (unlikely((void *)tcph_j + sizeof(struct tcphdr) > data_end ||
-                        tcph_j->doff < 5 ||
-                        (void *)tcph_j + (tcph_j->doff * 4) > data_end))
+        // Guard Clause:
+        //   1. Full 20B header AND full options (doff * 4) must fit inside linear buffer;
+        //   2. L3 total/payload length must actually cover the TCP header (defeats 60B Ethernet zero-padding);
+        //   3. Strict reserved bits (upper 3 bits of res1, 0x0E) must be 0 (blocks Nmap -O OS fingerprint probes).
+        if (unlikely((void *)tcph_j + sizeof(struct tcphdr) > data_end))
+        {
+            inc_pkt_stats(stats, STATS_TYPE_DROPPED);
+            return XDP_DROP;
+        }
+        u16 tcp_hlen = (u16)tcph_j->doff * 4;
+        if (unlikely(tcph_j->doff < 5 ||
+                        (void *)tcph_j + tcp_hlen > data_end ||
+                        (iph  && ntohs(iph->tot_len) < sizeof(struct iphdr) + tcp_hlen) ||
+                        (iph6 && ntohs(iph6->payload_len) < tcp_hlen) ||
+                        (tcph_j->res1 & 0x0E) != 0))
         {
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
