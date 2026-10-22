@@ -2,7 +2,7 @@
 
 /**
  * Prints help menu.
- * 
+ *
  * @return void
  */
 void print_help_menu()
@@ -26,9 +26,9 @@ void print_help_menu()
 
 /**
  * Handles signals from user.
- * 
+ *
  * @param code Signal code.
- * 
+ *
  * @return void
  */
 void hdl_signal(int code)
@@ -38,10 +38,10 @@ void hdl_signal(int code)
 
 /**
  * Parses an IP string with CIDR support. Stores IP in network byte order in ip.ip and CIDR in ip.cidr.
- * 
+ *
  * @param ip The IP string.
- * 
- * @return Returns an IP structure with IP and CIDR. 
+ *
+ * @return Returns an IP structure with IP and CIDR.
  */
 ip_range_t parse_ip_range(const char *ip)
 {
@@ -71,10 +71,10 @@ ip_range_t parse_ip_range(const char *ip)
 
 /**
  * Retrieves protocol name by ID.
- * 
+ *
  * @param id The protocol ID
- * 
- * @return The protocol string. 
+ *
+ * @return The protocol string.
  */
 const char* get_protocol_str_by_id(int id)
 {
@@ -85,9 +85,12 @@ const char* get_protocol_str_by_id(int id)
 
         case IPPROTO_UDP:
             return "UDP";
-        
+
         case IPPROTO_ICMP:
             return "ICMP";
+
+        case IPPROTO_ICMPV6:
+            return "ICMPv6";
     }
 
     return "N/A";
@@ -95,7 +98,7 @@ const char* get_protocol_str_by_id(int id)
 
 /**
  * Prints tool name and author.
- * 
+ *
  * @return void
  */
 void print_tool_info()
@@ -112,7 +115,7 @@ void print_tool_info()
 
 /**
  * Retrieves nanoseconds since system boot.
- * 
+ *
  * @return The current nanoseconds since the system last booted.
  */
 u64 get_boot_nano_time()
@@ -125,9 +128,9 @@ u64 get_boot_nano_time()
 
 /**
  * Parses a port range string and returns the minimum and maximum port.
- * 
+ *
  * @param range_str The port range string.
- * 
+ *
  * @return The port range as port_range_t type. Fields will be set to 0 on failure.
  */
 port_range_t parse_port_range(const char* range_str)
