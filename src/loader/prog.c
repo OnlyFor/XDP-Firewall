@@ -57,6 +57,14 @@ static void unpin_needed_maps(config__t* cfg, struct bpf_object* obj, int ignore
             log_msg(cfg, 1, 0, "[WARNING] Failed to un-pin BPF map 'map_allow' from file system (%d).", ret);
         }
     }
+    // Unpin allow cache map.
+    if ((ret = unpin_bpf_map(obj, XDP_MAP_PIN_DIR, "map_allow_ip")) != 0)
+    {
+        if (!ignore_errors)
+        {
+            log_msg(cfg, 1, 0, "[WARNING] Failed to un-pin BPF map 'map_allow_ip' from file system (%d).", ret);
+        }
+    }
 #ifdef ENABLE_IPV6
     // Unpin block (IPv6) map.
     if ((ret = unpin_bpf_map(obj, XDP_MAP_PIN_DIR, "map_block6")) != 0)
@@ -72,6 +80,14 @@ static void unpin_needed_maps(config__t* cfg, struct bpf_object* obj, int ignore
         if (!ignore_errors)
         {
             log_msg(cfg, 1, 0, "[WARNING] Failed to un-pin BPF map 'map_allow6' from file system (%d).", ret);
+        }
+    }
+    // Unpin allow cache (IPv6) map.
+    if ((ret = unpin_bpf_map(obj, XDP_MAP_PIN_DIR, "map_allow_ip6")) != 0)
+    {
+        if (!ignore_errors)
+        {
+            log_msg(cfg, 1, 0, "[WARNING] Failed to un-pin BPF map 'map_allow_ip6' from file system (%d).", ret);
         }
     }
 #endif
@@ -376,6 +392,15 @@ int main(int argc, char *argv[])
         {
             log_msg(&cfg, 3, 0, "BPF map 'map_allow' pinned to '%s/map_allow'.", XDP_MAP_PIN_DIR);
         }
+        // Pin the allow cache maps.
+        if ((ret = pin_bpf_map(obj, XDP_MAP_PIN_DIR, "map_allow_ip")) != 0)
+        {
+            log_msg(&cfg, 1, 0, "[WARNING] Failed to pin 'map_allow_ip' to file system (%d)...", ret);
+        }
+        else
+        {
+            log_msg(&cfg, 3, 0, "BPF map 'map_allow_ip' pinned to '%s/map_allow_ip'.", XDP_MAP_PIN_DIR);
+        }
 #ifdef ENABLE_IPV6
         if ((ret = pin_bpf_map(obj, XDP_MAP_PIN_DIR, "map_block6")) != 0)
         {
@@ -392,6 +417,14 @@ int main(int argc, char *argv[])
         else
         {
             log_msg(&cfg, 3, 0, "BPF map 'map_allow6' pinned to '%s/map_allow6'.", XDP_MAP_PIN_DIR);
+        }
+        if ((ret = pin_bpf_map(obj, XDP_MAP_PIN_DIR, "map_allow_ip6")) != 0)
+        {
+            log_msg(&cfg, 1, 0, "[WARNING] Failed to pin 'map_allow_ip6' to file system (%d)...", ret);
+        }
+        else
+        {
+            log_msg(&cfg, 3, 0, "BPF map 'map_allow_ip6' pinned to '%s/map_allow_ip6'.", XDP_MAP_PIN_DIR);
         }
 #endif
 

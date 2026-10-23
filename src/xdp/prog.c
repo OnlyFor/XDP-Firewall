@@ -692,9 +692,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         // ---- Step 0a: TCP port 0 — IANA reserved ----
         if (tcph_j->source == 0 || tcph_j->dest == 0)
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -738,9 +738,9 @@ int xdp_prog_main(struct xdp_md *ctx)
 
         if (junk_port)
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -760,9 +760,9 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
         if (junk_dst)
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -772,9 +772,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             (tcph_j->fin || tcph_j->rst || tcph_j->urg ||
                 (tcph_j->ack && dport < 1024 && dport != 53)))
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -794,9 +794,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             if (tcph_j->doff < 6 || tcph_j->window == 0 ||
                 flen > ceil || spoofed_syn_sport)
             {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//                 junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
@@ -806,9 +806,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (!tcph_j->syn && !tcph_j->ack && !tcph_j->fin &&
             !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -817,9 +817,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (!tcph_j->syn && !tcph_j->ack && !tcph_j->rst &&
             (tcph_j->fin || tcph_j->psh || tcph_j->urg))
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -830,9 +830,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             (tcph_j->fin && tcph_j->urg) ||
             (tcph_j->urg && tcph_j->urg_ptr == 0))
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -841,9 +841,9 @@ int xdp_prog_main(struct xdp_md *ctx)
         // if (tcph_j->syn && tcph_j->cwr && (tcph_j->ack || !tcph_j->ece))
         if (tcph_j->syn && tcph_j->cwr && (!tcph_j->ack && !tcph_j->ece))
         {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//             junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+            junk_block_src(iph, iph6, &src_ip6, now);
+#endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
@@ -904,9 +904,9 @@ int xdp_prog_main(struct xdp_md *ctx)
 #endif
             if (!is_loopback)
             {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//                 junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
@@ -968,9 +968,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             // ---- Step B: Port 0 is never valid ----
             if (dport == 0 || sport == 0)
             {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//                 junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
@@ -978,9 +978,9 @@ int xdp_prog_main(struct xdp_md *ctx)
             // ---- Step C: UDP checksum mandatory on IPv6 (RFC 8200 §8.1) ----
             if (iph6 && udph_j->check == 0)
             {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//                 junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
@@ -1047,9 +1047,9 @@ int xdp_prog_main(struct xdp_md *ctx)
 
             if (junk_port && sport != 53)
             {
-// #if JUNK_FILTER_BLOCK_TIME > 0
-//                 junk_block_src(iph, iph6, &src_ip6, now);
-// #endif
+#if JUNK_FILTER_BLOCK_TIME > 0
+                junk_block_src(iph, iph6, &src_ip6, now);
+#endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
             }
@@ -1300,6 +1300,7 @@ if (iph)
                     if (over_rate)
                     {
                         bpf_map_delete_elem(&map_allow, &akey);
+                        bpf_map_delete_elem(&map_allow_ip, &iph->saddr);
                     }
                     else
                     {
@@ -1341,6 +1342,7 @@ if (iph)
                     if (over_rate)
                     {
                         bpf_map_delete_elem(&map_allow6, &akey6);
+                        bpf_map_delete_elem(&map_allow_ip6, &src_ip6);
                     }
                     else
                     {
@@ -1481,6 +1483,7 @@ matched:
                         akey.protocol = proto;
 
                         bpf_map_update_elem(&map_allow, &akey, &expire, BPF_ANY);
+                        bpf_map_update_elem(&map_allow_ip, &iph->saddr, &expire, BPF_ANY);
                     }
 #ifdef ENABLE_IPV6
                     else if (iph6)
@@ -1493,6 +1496,7 @@ matched:
                         akey6.protocol = proto;
 
                         bpf_map_update_elem(&map_allow6, &akey6, &expire, BPF_ANY);
+                        bpf_map_update_elem(&map_allow_ip6, &src_ip6, &expire, BPF_ANY);
                     }
 #endif
                 }

@@ -45,7 +45,6 @@ static __always_inline int check_ip_range_drop(u32 ip);
 // More Info: https://stackoverflow.com/questions/24289599/always-inline-does-not-work-when-function-is-implemented-in-different-file
 #include "helpers.c"
 
-
 #if defined(ENABLE_UDP_JUNK_FILTER) || defined(ENABLE_TCP_JUNK_FILTER)
 #if JUNK_FILTER_BLOCK_TIME > 0
 static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* iph6, u128* src_ip6, u64 now)
@@ -70,11 +69,15 @@ static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* ip
             if (!bpf_map_lookup_elem(&map_my_ip, &iph->saddr))
 #endif
             {
-                // u32 saddr_b;
-                // __builtin_memcpy(&saddr_b, &iph->saddr, sizeof(saddr_b));  // ← 栈上拷贝
-                u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
-                // bpf_map_update_elem(&map_block, &saddr_b, &expire, BPF_ANY);  // ← 用栈变量
-                bpf_map_update_elem(&map_block, &iph->saddr, &expire, BPF_ANY);  // ← 用栈变量
+                u64 *allow_exp = bpf_map_lookup_elem(&map_allow_ip, &iph->saddr);
+                if (!allow_exp || *allow_exp <= now)
+                {
+                    // u32 saddr_b;
+                    // __builtin_memcpy(&saddr_b, &iph->saddr, sizeof(saddr_b));  // ← 栈上拷贝
+                    u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
+                    // bpf_map_update_elem(&map_block, &saddr_b, &expire, BPF_ANY);  // ← 用栈变量
+                    bpf_map_update_elem(&map_block, &iph->saddr, &expire, BPF_ANY);  // ← 用栈变量
+                }
             }
         }
     }
@@ -90,8 +93,12 @@ static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* ip
             if (!bpf_map_lookup_elem(&map_my_ip6, src_ip6))
 #endif
             {
-                u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
-                bpf_map_update_elem(&map_block6, src_ip6, &expire, BPF_ANY);  // src_ip6 已是栈变量，OK
+                u64 *allow_exp6 = bpf_map_lookup_elem(&map_allow_ip6, src_ip6);
+                if (!allow_exp6 || *allow_exp6 <= now)
+                {
+                    u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
+                    bpf_map_update_elem(&map_block6, src_ip6, &expire, BPF_ANY);  // src_ip6 已是栈变量，OK
+                }
             }
         }
     }
