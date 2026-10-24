@@ -477,3 +477,4 @@ This is a complex packet processing/forwarding/dropping project I made for a gam
 ## 🙌 Credits
 * [Christian Deacon](https://github.com/gamemann) - Creator.
 * [Phil](https://github.com/Nasty07) - Contributor.
+* [Hatamiarash7](https://github.com/Hatamiarash7) - Many improvements and bug fixes (PR [#91](https://github.com/gamemann/xdp-firewall/pull/91))
