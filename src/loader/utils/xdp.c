@@ -111,8 +111,6 @@ struct bpf_object* get_bpf_obj(struct xdp_program* prog)
  */
 int attach_xdp(struct xdp_program *prog, char** mode, int ifidx, int detach, int force_skb, int force_offload)
 {
-    int err;
-
     // Before attaching, set chaining options.
     xdp_program__set_run_prio(prog, XDP_MULTIPROG_PRIORITY);
     xdp_program__set_chain_call_enabled(prog, XDP_MULTIPROG_ACTION, XDP_MULTIPROG_ENABLED);
@@ -203,7 +201,20 @@ int attach_xdp(struct xdp_program *prog, char** mode, int ifidx, int detach, int
  */
 int delete_filter(int map_filters, u32 idx)
 {
-    return bpf_map_delete_elem(map_filters, &idx);
+    int cpus = libbpf_num_possible_cpus();
+    if (cpus < 1)
+    {
+        return -1;
+    }
+    filter_t *empty = calloc(cpus, sizeof(*empty));
+    if (!empty)
+    {
+        return -1;
+    }
+    // Array maps cannot delete elements; an unset value terminates matching.
+    int ret = bpf_map_update_elem(map_filters, &idx, empty, BPF_ANY);
+    free(empty);
+    return ret;
 }
 
 /**
@@ -230,9 +241,15 @@ void delete_filters(int map_filters)
  * 
  * @return 0 on success or error value of bpf_map_update_elem().
  */
-int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
+static int update_filter_cpus(int map_filters, filter_rule_cfg_t* filter_cfg, int idx, filter_t *filter_cpus, int cpus)
 {
+    if (validate_filter(filter_cfg) != 0)
+    {
+        return -1;
+    }
     filter_t filter = {0};
+    filter.action = 1;
+    filter.block_time = 1;
 
     filter.set = filter_cfg->set;
 
@@ -296,7 +313,12 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
     if (filter_cfg->ip.src_ip)
     {
         ip_range_t ip_range = parse_ip_range(filter_cfg->ip.src_ip);
+        if (!ip_range.success)
+        {
+            return -1;
+        }
 
+        filter.ip.do_src_ip = 1;
         filter.ip.src_ip = ip_range.ip;
         filter.ip.src_cidr = ip_range.cidr;
     }
@@ -304,7 +326,12 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
     if (filter_cfg->ip.dst_ip)
     {
         ip_range_t ip_range = parse_ip_range(filter_cfg->ip.dst_ip);
+        if (!ip_range.success)
+        {
+            return -1;
+        }
 
+        filter.ip.do_dst_ip = 1;
         filter.ip.dst_ip = ip_range.ip;
         filter.ip.dst_cidr = ip_range.cidr;
     }
@@ -314,18 +341,24 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
     {
         struct in6_addr in;
 
-        inet_pton(AF_INET6, filter_cfg->ip.src_ip6, &in);
-
-        memcpy(filter.ip.src_ip6, in.__in6_u.__u6_addr32, 4);
+        if (inet_pton(AF_INET6, filter_cfg->ip.src_ip6, &in) != 1)
+        {
+            return -1;
+        }
+        filter.ip.do_src_ip6 = 1;
+        memcpy(filter.ip.src_ip6, &in, sizeof(filter.ip.src_ip6));
     }
 
     if (filter_cfg->ip.dst_ip6)
     {
         struct in6_addr in;
 
-        inet_pton(AF_INET6, filter_cfg->ip.dst_ip6, &in);
-
-        memcpy(filter.ip.dst_ip6, in.__in6_u.__u6_addr32, 4);
+        if (inet_pton(AF_INET6, filter_cfg->ip.dst_ip6, &in) != 1)
+        {
+            return -1;
+        }
+        filter.ip.do_dst_ip6 = 1;
+        memcpy(filter.ip.dst_ip6, &in, sizeof(filter.ip.dst_ip6));
     }
 #endif
 
@@ -370,6 +403,10 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
     }
 
     port_range_t tcp_src_port_range = parse_port_range(filter_cfg->tcp.sport);
+    if (filter_cfg->tcp.sport && !tcp_src_port_range.success)
+    {
+        return -1;
+    }
 
     if (tcp_src_port_range.success)
     {
@@ -381,6 +418,10 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
     }
 
     port_range_t tcp_dst_port_range = parse_port_range(filter_cfg->tcp.dport);
+    if (filter_cfg->tcp.dport && !tcp_dst_port_range.success)
+    {
+        return -1;
+    }
 
     if (tcp_dst_port_range.success)
     {
@@ -453,6 +494,10 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
     }
 
     port_range_t udp_src_port_range = parse_port_range(filter_cfg->udp.sport);
+    if (filter_cfg->udp.sport && !udp_src_port_range.success)
+    {
+        return -1;
+    }
 
     if (udp_src_port_range.success)
     {
@@ -464,6 +509,10 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
     }
 
     port_range_t udp_dst_port_range = parse_port_range(filter_cfg->udp.dport);
+    if (filter_cfg->udp.dport && !udp_dst_port_range.success)
+    {
+        return -1;
+    }
 
     if (udp_dst_port_range.success)
     {
@@ -493,15 +542,33 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
         filter.icmp.type = filter_cfg->icmp.type;
     }
 
-    filter_t filter_cpus[MAX_CPUS];
-    memset(filter_cpus, 0, sizeof(filter_cpus));
-
-    for (int j = 0; j < MAX_CPUS; j++)
+    for (int j = 0; j < cpus; j++)
     {
         filter_cpus[j] = filter;
     }
 
-    return bpf_map_update_elem(map_filters, &idx, &filter_cpus, BPF_ANY);
+    return bpf_map_update_elem(map_filters, &idx, filter_cpus, BPF_ANY);
+}
+
+int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
+{
+    int cpus = libbpf_num_possible_cpus();
+    if (cpus < 1 || idx < 0 || idx >= MAX_FILTERS)
+    {
+        return -1;
+    }
+    if (!filter_cfg->set || !filter_cfg->enabled)
+    {
+        return delete_filter(map_filters, idx);
+    }
+    filter_t *values = calloc(cpus, sizeof(*values));
+    if (!values)
+    {
+        return -1;
+    }
+    int ret = update_filter_cpus(map_filters, filter_cfg, idx, values, cpus);
+    free(values);
+    return ret;
 }
 
 /**
@@ -510,20 +577,26 @@ int update_filter(int map_filters, filter_rule_cfg_t* filter_cfg, int idx)
  * @param map_filters The filter's BPF map FD.
  * @param cfg A pointer to the config structure.
  * 
- * @return Void
+ * @return 0 on success or -1 on failure.
  */
-void update_filters(int map_filters, config__t *cfg)
+int update_filters(int map_filters, config__t *cfg)
 {
-    int ret;
+    int ret = 0;
     int cur_idx = 0;
+    int cpus = libbpf_num_possible_cpus();
+    if (cpus < 1)
+    {
+        return -1;
+    }
+    filter_t *values = calloc(cpus, sizeof(*values));
+    if (!values)
+    {
+        return -1;
+    }
 
     // Add a filter to the filter maps.
-    for (int i = 0; i < cfg->filters_cnt; i++)
+    for (int i = 0; i < MAX_FILTERS; i++)
     {
-        // Delete previous rule from BPF map.
-        // We do this in the case rules were edited and were put out of order since the key doesn't uniquely map to a specific rule.
-        delete_filter(map_filters, i);
-
         filter_rule_cfg_t* filter = &cfg->filters[i];
 
         // Only insert set and enabled filters.
@@ -533,15 +606,32 @@ void update_filters(int map_filters, config__t *cfg)
         }
 
         // Attempt to update filter.
-        if ((ret = update_filter(map_filters, filter, cur_idx)) != 0)
+        if ((ret = update_filter_cpus(map_filters, filter, cur_idx, values, cpus)) != 0)
         {
             fprintf(stderr, "[WARNING] Failed to update filter #%d due to BPF update error (%d)...\n", cur_idx, ret);
 
-            continue;
+            break;
         }
 
         cur_idx++;
     }
+    if (ret != 0)
+    {
+        free(values);
+        return ret;
+    }
+    // Invalidate the old tail after shrinking or disabling rules. The kernel
+    // stops at this sentinel, so clearing every remaining slot is unnecessary.
+    if (cur_idx < MAX_FILTERS)
+    {
+        memset(values, 0, cpus * sizeof(*values));
+        if (bpf_map_update_elem(map_filters, &cur_idx, values, BPF_ANY) != 0)
+        {
+            ret = -1;
+        }
+    }
+    free(values);
+    return ret;
 }
 
 /**
@@ -563,7 +653,7 @@ int pin_bpf_map(struct bpf_object* obj, const char* pin_dir, const char* map_nam
     }
 
     char full_path[255];
-    snprintf(full_path, sizeof(full_path), "%s/%s", XDP_MAP_PIN_DIR, map_name);
+    snprintf(full_path, sizeof(full_path), "%s/%s", pin_dir, map_name);
 
     return bpf_map__pin(map, full_path);
 }
@@ -587,7 +677,7 @@ int unpin_bpf_map(struct bpf_object* obj, const char* pin_dir, const char* map_n
     }
 
     char full_path[255];
-    snprintf(full_path, sizeof(full_path), "%s/%s", XDP_MAP_PIN_DIR, map_name);
+    snprintf(full_path, sizeof(full_path), "%s/%s", pin_dir, map_name);
 
     return bpf_map__unpin(map, full_path);
 }
@@ -673,7 +763,11 @@ int add_block6(int map_block6, u128 ip, u64 expires)
  */
 int delete_range_drop(int map_range_drop, u32 net, u8 cidr)
 {
-    u32 bit_mask = htonl(( ~( (1 << (32 - cidr) ) - 1) ));
+    if (cidr > 32)
+    {
+        return -1;
+    }
+    u32 bit_mask = cidr ? htonl(0xFFFFFFFFu << (32 - cidr)) : 0;
     u32 start = net & bit_mask;
 
     lpm_trie_key_t key = {0};
@@ -694,7 +788,11 @@ int delete_range_drop(int map_range_drop, u32 net, u8 cidr)
  */
 int add_range_drop(int map_range_drop, u32 net, u8 cidr)
 {
-    u32 bit_mask = htonl(( ~( (1 << (32 - cidr) ) - 1) ));
+    if (cidr > 32)
+    {
+        return -1;
+    }
+    u32 bit_mask = cidr ? htonl(0xFFFFFFFFu << (32 - cidr)) : 0;
     u32 start = net & bit_mask;
 
     lpm_trie_key_t key = {0};
@@ -727,6 +825,11 @@ void update_range_drops(int map_range_drop, config__t* cfg)
 
         // Parse IP range string and return network IP and CIDR.
         ip_range_t t = parse_ip_range(range);
+        if (!t.success)
+        {
+            fprintf(stderr, "[WARNING] Invalid IP drop range: %s\n", range);
+            continue;
+        }
 
         add_range_drop(map_range_drop, t.ip, t.cidr);
     }

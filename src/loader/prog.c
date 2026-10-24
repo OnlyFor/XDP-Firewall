@@ -144,6 +144,7 @@ int main(int argc, char *argv[])
     if (cli.list)
     {
         print_cfg(&cfg);
+        free_cfg(&cfg);
 
         return EXIT_SUCCESS;
     }
@@ -214,7 +215,7 @@ int main(int argc, char *argv[])
         // Get interface index.
         if_idx[i] = if_nametoindex(interface);
     
-        if (if_idx[i] < 0)
+        if (if_idx[i] == 0)
         {
             log_msg(&cfg, 0, 1, "[WARNING] Failed to retrieve index of network interface '%s'.\n", interface);
     
@@ -231,6 +232,7 @@ int main(int argc, char *argv[])
         if ((ret = attach_xdp(prog, &mode_used, if_idx[i], 0, cli.skb, cli.offload)) != 0)
         {
             log_msg(&cfg, 0, 1, "[WARNING] Failed to attach XDP program to interface '%s' using available modes (%d).\n", interface, ret);
+            if_idx[i] = 0;
 
             continue;
         }
@@ -312,7 +314,8 @@ int main(int argc, char *argv[])
     log_msg(&cfg, 3, 0, "map_stats FD => %d.", map_stats);
 
     // Pin BPF maps to file system if we need to.
-    if (cfg.pin_maps)
+    const int pin_maps = cfg.pin_maps;
+    if (pin_maps)
     {
         log_msg(&cfg, 2, 0, "Pinning BPF maps...");
 
@@ -393,7 +396,10 @@ int main(int argc, char *argv[])
     log_msg(&cfg, 2, 0, "Updating filters...");
 
     // Update filters.
-    update_filters(map_filters, &cfg);
+    if (update_filters(map_filters, &cfg) != 0)
+    {
+        log_msg(&cfg, 0, 1, "[ERROR] Failed to populate filter map.");
+    }
 #endif
 
 #ifdef ENABLE_IP_RANGE_DROP
@@ -411,7 +417,7 @@ int main(int argc, char *argv[])
     signal(SIGTERM, hdl_signal);
 
     // Receive CPU count for stats map parsing.
-    int cpus = get_nprocs_conf();
+    int cpus = libbpf_num_possible_cpus();
 
     log_msg(&cfg, 4, 0, "Retrieved %d CPUs on host.", cpus);
 
@@ -420,8 +426,6 @@ int main(int argc, char *argv[])
     // Create last updated variables.
     time_t last_update_check = time(NULL);
     time_t last_config_check = time(NULL);
-
-    unsigned int sleep_time = cfg.stdout_update_time * 1000;
 
     struct stat conf_stat;
 
@@ -472,12 +476,14 @@ int main(int argc, char *argv[])
 
 #ifdef ENABLE_FILTERS
                     // Update filters.
-                    update_filters(map_filters, &cfg);
+                    if (update_filters(map_filters, &cfg) != 0)
+                    {
+                        log_msg(&cfg, 0, 1, "[ERROR] Failed to update filter map.");
+                    }
 #endif
+                    last_config_check = conf_stat.st_mtime;
                 }
 
-                // Update last check timer
-                last_config_check = time(NULL);
             }
 
             // Update last updated variable.
@@ -497,7 +503,7 @@ int main(int argc, char *argv[])
         poll_filters_rb(rb);
 #endif
 
-        usleep(sleep_time);
+        usleep((unsigned int)cfg.stdout_update_time * 1000);
     }
 
     fprintf(stdout, "\n");
@@ -514,9 +520,7 @@ int main(int argc, char *argv[])
     // Detach XDP program from interfaces.
     for (int i = 0; i < MAX_INTERFACES; i++)
     {
-        const char* interface = cfg.interfaces[i];
-    
-        if (!interface)
+        if (if_idx[i] == 0)
         {
             continue;
         }
@@ -525,12 +529,12 @@ int main(int argc, char *argv[])
 
         if (attach_xdp(prog, &mode_used, if_idx[i], 1, cli.skb, cli.offload))
         {
-            log_msg(&cfg, 0, 0, "[WARNING] Failed to detach XDP program from interface '%s'.\n", interface);
+            log_msg(&cfg, 0, 0, "[WARNING] Failed to detach XDP program from interface index %d.\n", if_idx[i]);
         }
     }
 
     // Unpin maps from file system.
-    if (cfg.pin_maps)
+    if (pin_maps)
     {
         log_msg(&cfg, 2, 0, "Un-pinning BPF maps from file system...");
 
@@ -543,6 +547,7 @@ int main(int argc, char *argv[])
     xdp_program__close(prog);
 
     log_msg(&cfg, 1, 0, "Exiting.\n");
+    free_cfg(&cfg);
 
     // Exit program successfully.
     return EXIT_SUCCESS;

@@ -118,6 +118,7 @@ struct config_overrides
 } typedef config_overrides_t;
 
 void set_cfg_defaults(config__t *cfg);
+void free_cfg(config__t *cfg);
 void set_filter_defaults(filter_rule_cfg_t* filter);
 
 void print_cfg(config__t* cfg);
@@ -130,6 +131,7 @@ int open_cfg(FILE** file, const char *file_name);
 int close_cfg(FILE* file);
 int read_cfg(FILE* file, char** buffer);
 int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides);
+int validate_filter(const filter_rule_cfg_t *filter);
 
 int get_next_filter_idx(config__t* cfg);
 int get_next_ip_drop_range_idx(config__t* cfg);

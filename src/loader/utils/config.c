@@ -13,10 +13,12 @@
 int load_cfg(config__t *cfg, const char* cfg_file, int load_defaults, config_overrides_t* overrides)
 {
     int ret;
+    config__t replacement = {0};
+    config__t *target = load_defaults ? &replacement : cfg;
 
     if (load_defaults)
     {
-        set_cfg_defaults(cfg);
+        set_cfg_defaults(target);
     }
     
     FILE *file = NULL;
@@ -25,7 +27,7 @@ int load_cfg(config__t *cfg, const char* cfg_file, int load_defaults, config_ove
     if ((ret = open_cfg(&file, cfg_file)) != 0 || file == NULL)
     {
         fprintf(stderr, "Error opening config file.\n");
-        
+        free_cfg(&replacement);
         return ret;
     }
 
@@ -37,16 +39,19 @@ int load_cfg(config__t *cfg, const char* cfg_file, int load_defaults, config_ove
         fprintf(stderr, "Error reading config file.\n");
 
         close_cfg(file);
+        free_cfg(&replacement);
 
         return ret;
     }
 
     // Parse config.
-    if ((ret = parse_cfg(cfg, buffer, overrides)) != 0)
+    if ((ret = parse_cfg(target, buffer, overrides)) != 0)
     {
         fprintf(stderr, "Error parsing config file.\n");
 
         close_cfg(file);
+        free(buffer);
+        free_cfg(&replacement);
 
         return ret;
     }
@@ -56,10 +61,16 @@ int load_cfg(config__t *cfg, const char* cfg_file, int load_defaults, config_ove
     if ((ret = close_cfg(file)) != 0)
     {
         fprintf(stderr, "Error closing config file.\n");
+        free_cfg(&replacement);
 
         return ret;
     }
 
+    if (load_defaults)
+    {
+        free_cfg(cfg);
+        *cfg = replacement;
+    }
     return EXIT_SUCCESS;
 }
 
@@ -110,7 +121,10 @@ int close_cfg(FILE* file)
  */
 int read_cfg(FILE* file, char** buffer)
 {
-    fseek(file, 0, SEEK_END);
+    if (fseek(file, 0, SEEK_END) != 0)
+    {
+        return 1;
+    }
     long file_size = ftell(file);
     rewind(file);
 
@@ -127,6 +141,12 @@ int read_cfg(FILE* file, char** buffer)
     }
 
     size_t read = fread(*buffer, 1, file_size, file);
+    if (read != (size_t)file_size || ferror(file))
+    {
+        free(*buffer);
+        *buffer = NULL;
+        return 1;
+    }
     (*buffer)[read] = '\0';
 
     return 0;
@@ -152,10 +172,18 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
     // Attempt to read the config.
     if (config_read_string(&conf, data) == CONFIG_FALSE)
     {
-        log_msg(cfg, 0, 1, "Error from LibConfig when reading file - %s (Line %d)", config_error_text(&conf), config_error_line(&conf));
+        fprintf(stderr, "Error from LibConfig when reading file - %s (Line %d)\n", config_error_text(&conf), config_error_line(&conf));
 
         config_destroy(&conf);
 
+        return EXIT_FAILURE;
+    }
+
+    setting = config_lookup(&conf, "filters");
+    if (setting && (!config_setting_is_list(setting) || config_setting_length(setting) > MAX_FILTERS))
+    {
+        fprintf(stderr, "Filters must be a list with at most %d entries.\n", MAX_FILTERS);
+        config_destroy(&conf);
         return EXIT_FAILURE;
     }
 
@@ -214,6 +242,12 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
     if (interfaces)
     {
+        for (int i = 0; i < MAX_INTERFACES; i++)
+        {
+            free(cfg->interfaces[i]);
+            cfg->interfaces[i] = NULL;
+        }
+        cfg->interfaces_cnt = 0;
         if (config_setting_is_list(interfaces))
         {
             for (int i = 0; i < config_setting_length(interfaces); i++)
@@ -230,19 +264,13 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
                     continue;
                 }
 
-                if (cfg->interfaces[i])
+                if (cfg->interfaces_cnt == 0 && overrides && overrides->interface)
                 {
-                    free(cfg->interfaces[i]);
-                    cfg->interfaces[i] = NULL;
-                }
-
-                if (i == 0 && overrides && overrides->interface)
-                {
-                    cfg->interfaces[i] = strdup(overrides->interface);
+                    cfg->interfaces[cfg->interfaces_cnt] = strdup(overrides->interface);
                 }
                 else
                 {
-                    cfg->interfaces[i] = strdup(interface);
+                    cfg->interfaces[cfg->interfaces_cnt] = strdup(interface);
                 }
 
                 cfg->interfaces_cnt++;
@@ -365,17 +393,22 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
     if (setting && config_setting_is_list(setting))
     {
+        cfg->filters_cnt = 0;
+        for (int i = 0; i < MAX_FILTERS; i++)
+        {
+            set_filter_defaults(&cfg->filters[i]);
+        }
         for (int i = 0; i < config_setting_length(setting); i++)
         {
             filter_rule_cfg_t* filter = &cfg->filters[i];
 
             config_setting_t* filter_cfg = config_setting_get_elem(setting, i);
 
-            if (filter == NULL || filter_cfg == NULL)
+            if (filter_cfg == NULL || config_setting_type(filter_cfg) != CONFIG_TYPE_GROUP)
             {
-                log_msg(cfg, 0, 1, "[WARNING] Failed to read filter rule at index #%d. 'filter' or 'filter_cfg' is NULL (make sure you didn't exceed the maximum filters allowed!)...");
-
-                continue;
+                fprintf(stderr, "Invalid filter at index #%d.\n", i + 1);
+                config_destroy(&conf);
+                return EXIT_FAILURE;
             }
 
             cfg->filters_cnt++;
@@ -746,16 +779,14 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
     if (setting && config_setting_is_list(setting))
     {
+        cfg->drop_ranges_cnt = 0;
+        for (int i = 0; i < MAX_IP_RANGES; i++)
+        {
+            free(cfg->drop_ranges[i]);
+            cfg->drop_ranges[i] = NULL;
+        }
         for (int i = 0; i < config_setting_length(setting) && i < MAX_IP_RANGES; i++)
         {
-            const char* range = cfg->drop_ranges[i];
-
-            if (cfg->drop_ranges[i])
-            {
-                free(cfg->drop_ranges[i]);
-                cfg->drop_ranges[i] = NULL;
-            }
-
             const char* new_range = config_setting_get_string_elem(setting, i);
 
             if (!new_range)
@@ -771,6 +802,71 @@ int parse_cfg(config__t *cfg, const char* data, config_overrides_t* overrides)
 
     config_destroy(&conf);
 
+    if (cfg->update_time < 0 || cfg->stdout_update_time <= 0 || cfg->stdout_update_time > 3600000)
+    {
+        fprintf(stderr, "Invalid update interval. stdout_update_time must be 1..3600000 ms.\n");
+        return EXIT_FAILURE;
+    }
+    for (int i = 0; i < cfg->filters_cnt; i++)
+    {
+        filter_rule_cfg_t *filter = &cfg->filters[i];
+        if (validate_filter(filter) != 0)
+        {
+            fprintf(stderr, "Invalid address, port, or scalar in filter #%d.\n", i + 1);
+            return EXIT_FAILURE;
+        }
+    }
+    for (int i = 0; i < MAX_IP_RANGES; i++)
+    {
+        if (cfg->drop_ranges[i] && !parse_ip_range(cfg->drop_ranges[i]).success)
+        {
+            fprintf(stderr, "Invalid IP drop range: %s\n", cfg->drop_ranges[i]);
+            return EXIT_FAILURE;
+        }
+    }
+    return EXIT_SUCCESS;
+}
+
+int validate_filter(const filter_rule_cfg_t *filter)
+{
+    struct in6_addr addr;
+    if ((filter->ip.src_ip && !parse_ip_range(filter->ip.src_ip).success) ||
+        (filter->ip.dst_ip && !parse_ip_range(filter->ip.dst_ip).success) ||
+        (filter->ip.src_ip6 && inet_pton(AF_INET6, filter->ip.src_ip6, &addr) != 1) ||
+        (filter->ip.dst_ip6 && inet_pton(AF_INET6, filter->ip.dst_ip6, &addr) != 1) ||
+        (filter->tcp.sport && !parse_port_range(filter->tcp.sport).success) ||
+        (filter->tcp.dport && !parse_port_range(filter->tcp.dport).success) ||
+        (filter->udp.sport && !parse_port_range(filter->udp.sport).success) ||
+        (filter->udp.dport && !parse_port_range(filter->udp.dport).success) ||
+        filter->action < -1 || filter->action > 1 ||
+        filter->enabled < -1 || filter->enabled > 1 ||
+        filter->log < -1 || filter->log > 1 ||
+        filter->tcp.enabled < -1 || filter->tcp.enabled > 1 ||
+        filter->udp.enabled < -1 || filter->udp.enabled > 1 ||
+        filter->icmp.enabled < -1 || filter->icmp.enabled > 1 ||
+        filter->tcp.urg < -1 || filter->tcp.urg > 1 ||
+        filter->tcp.ack < -1 || filter->tcp.ack > 1 ||
+        filter->tcp.rst < -1 || filter->tcp.rst > 1 ||
+        filter->tcp.psh < -1 || filter->tcp.psh > 1 ||
+        filter->tcp.syn < -1 || filter->tcp.syn > 1 ||
+        filter->tcp.fin < -1 || filter->tcp.fin > 1 ||
+        filter->tcp.ece < -1 || filter->tcp.ece > 1 ||
+        filter->tcp.cwr < -1 || filter->tcp.cwr > 1 ||
+        filter->block_time < -1 || filter->block_time > 65535 ||
+        filter->ip_pps < -1 || filter->ip_bps < -1 ||
+        filter->flow_pps < -1 || filter->flow_bps < -1 ||
+        filter->ip.min_ttl < -1 || filter->ip.min_ttl > 255 ||
+        filter->ip.max_ttl < -1 || filter->ip.max_ttl > 255 ||
+        filter->ip.tos < -1 || filter->ip.tos > 255 ||
+        filter->ip.min_len < -1 || filter->ip.min_len > 65535 ||
+        filter->ip.max_len < -1 || filter->ip.max_len > 65535 ||
+        filter->icmp.code < -1 || filter->icmp.code > 255 ||
+        filter->icmp.type < -1 || filter->icmp.type > 255 ||
+        (filter->ip.min_ttl > -1 && filter->ip.max_ttl > -1 && filter->ip.min_ttl > filter->ip.max_ttl) ||
+        (filter->ip.min_len > -1 && filter->ip.max_len > -1 && filter->ip.min_len > filter->ip.max_len))
+    {
+        return EXIT_FAILURE;
+    }
     return EXIT_SUCCESS;
 }
 
@@ -797,11 +893,8 @@ int save_cfg(config__t* cfg, const char* file_path)
     config_setting_set_int(setting, cfg->verbose);
 
     // Add log file.
-    if (cfg->log_file)
-    {
-        setting = config_setting_add(root, "log_file", CONFIG_TYPE_STRING);
-        config_setting_set_string(setting, cfg->log_file);
-    }
+    setting = config_setting_add(root, "log_file", CONFIG_TYPE_STRING);
+    config_setting_set_string(setting, cfg->log_file ? cfg->log_file : "");
 
     // Add interface(s).
     if (cfg->interfaces_cnt > 0)
@@ -1148,10 +1241,14 @@ int save_cfg(config__t* cfg, const char* file_path)
 
     config_write(&conf, file);
 
-    fclose(file);
+    int failed = ferror(file);
+    if (fclose(file) != 0)
+    {
+        failed = 1;
+    }
     config_destroy(&conf);
 
-    return 0;
+    return failed;
 }
 
 /**
@@ -1323,6 +1420,24 @@ void set_cfg_defaults(config__t* cfg)
 
         cfg->drop_ranges[i] = NULL;
     }
+}
+
+void free_cfg(config__t *cfg)
+{
+    free(cfg->log_file);
+    for (int i = 0; i < MAX_INTERFACES; i++)
+    {
+        free(cfg->interfaces[i]);
+    }
+    for (int i = 0; i < MAX_FILTERS; i++)
+    {
+        set_filter_defaults(&cfg->filters[i]);
+    }
+    for (int i = 0; i < MAX_IP_RANGES; i++)
+    {
+        free(cfg->drop_ranges[i]);
+    }
+    memset(cfg, 0, sizeof(*cfg));
 }
 
 /**

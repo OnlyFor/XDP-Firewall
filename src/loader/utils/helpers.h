@@ -11,11 +11,14 @@
 #include <ctype.h>
 
 #include <sys/sysinfo.h>
+#include <time.h>
+#include <errno.h>
 
 struct ip_range
 {
     u32 ip;
     u8 cidr;
+    unsigned int success;
 } typedef ip_range_t;
 
 struct port_range
