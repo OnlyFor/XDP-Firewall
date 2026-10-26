@@ -252,6 +252,7 @@ static int update_filter_cpus(int map_filters, filter_rule_cfg_t* filter_cfg, in
     filter_t filter = {0};
     filter.action = 1;
     filter.block_time = 1;
+    filter.allow_time = 0;
 
     filter.set = filter_cfg->set;
 

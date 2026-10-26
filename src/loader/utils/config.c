@@ -947,6 +947,7 @@ int validate_filter(const filter_rule_cfg_t *filter)
         filter->tcp.ece < -1 || filter->tcp.ece > 1 ||
         filter->tcp.cwr < -1 || filter->tcp.cwr > 1 ||
         filter->block_time < -1 || filter->block_time > 65535 ||
+        filter->allow_time < 0 || filter->allow_time > 65535 ||
         filter->ip_pps < -1 || filter->ip_bps < -1 ||
         filter->flow_pps < -1 || filter->flow_bps < -1 ||
         filter->ip.min_ttl < -1 || filter->ip.min_ttl > 255 ||
