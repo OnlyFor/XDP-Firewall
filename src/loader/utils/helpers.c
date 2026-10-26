@@ -49,23 +49,39 @@ ip_range_t parse_ip_range(const char *ip)
     ret.cidr = 32;
 
     char ip_copy[INET_ADDRSTRLEN + 3];
-    strncpy(ip_copy, ip, sizeof(ip_copy) - 1);
-    ip_copy[sizeof(ip_copy) - 1] = '\0';
-
-    char *token = strtok(ip_copy, "/");
-
-    if (token)
+    if (!ip || strlen(ip) >= sizeof(ip_copy))
     {
-        ret.ip = inet_addr(token);
+        return ret;
+    }
+    strcpy(ip_copy, ip);
 
-        token = strtok(NULL, "/");
-
-        if (token)
+    char *prefix = strchr(ip_copy, '/');
+    if (prefix)
+    {
+        *prefix++ = '\0';
+        if (!isdigit((unsigned char)*prefix))
         {
-            ret.cidr = (u8) strtoul(token, NULL, 10);
+            return ret;
         }
+        char *end;
+        errno = 0;
+        unsigned long cidr = strtoul(prefix, &end, 10);
+
+        if (errno || end == prefix || *end != '\0' || cidr > 32)
+        {
+            return ret;
+        }
+        ret.cidr = cidr;
     }
 
+    struct in_addr addr;
+    if (inet_pton(AF_INET, ip_copy, &addr) != 1)
+    {
+        return ret;
+    }
+
+    ret.ip = addr.s_addr;
+    ret.success = 1;
     return ret;
 }
 
@@ -120,10 +136,13 @@ void print_tool_info()
  */
 u64 get_boot_nano_time()
 {
-    struct sysinfo sys;
-    sysinfo(&sys);
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    {
+        return 0;
+    }
 
-    return sys.uptime * 1e9;
+    return (u64)now.tv_sec * NANO_TO_SEC + now.tv_nsec;
 }
 
 /**
@@ -144,8 +163,11 @@ port_range_t parse_port_range(const char* range_str)
 
     // Copy range string.
     char range_str_copy[24];
-    strncpy(range_str_copy, range_str, sizeof(range_str_copy) - 1);
-    range_str_copy[sizeof(range_str_copy) - 1] = '\0';
+    if (strlen(range_str) >= sizeof(range_str_copy))
+    {
+        return ret;
+    }
+    strcpy(range_str_copy, range_str);
 
     // First scan for port ranges with ":".
     char* start = range_str_copy;
@@ -164,27 +186,38 @@ port_range_t parse_port_range(const char* range_str)
 
     char *end_ptr = NULL;
 
-    ret.min = strtol(start, &end_ptr, 10);
+    errno = 0;
+    long min = strtol(start, &end_ptr, 10);
+    char *digits_end = end_ptr;
+    while (isspace((unsigned char)*end_ptr))
+    {
+        end_ptr++;
+    }
 
-    if (end_ptr == start || (*end_ptr != '\0' && !isspace((unsigned char)*end_ptr)))
+    if (errno || digits_end == start || *end_ptr != '\0' || min < 0 || min > 65535)
     {
         return ret;
     }
 
+    long max = min;
     if (end)
     {
-        ret.max = strtol(end, &end_ptr, 10);
+        errno = 0;
+        max = strtol(end, &end_ptr, 10);
+        digits_end = end_ptr;
+        while (isspace((unsigned char)*end_ptr))
+        {
+            end_ptr++;
+        }
 
-        if (end_ptr == end || (*end_ptr != '\0' && !isspace((unsigned char)*end_ptr)))
+        if (errno || digits_end == end || *end_ptr != '\0' || max < min || max > 65535)
         {
             return ret;
         }
     }
-    else
-    {
-        ret.max = ret.min;
-    }
 
+    ret.min = min;
+    ret.max = max;
     ret.success = 1;
 
     return ret;

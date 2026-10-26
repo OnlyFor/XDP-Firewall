@@ -180,7 +180,7 @@ int main(int argc, char *argv[])
             idx = get_next_filter_idx(&cfg);
         }
 
-        if (idx < 0)
+        if (idx < 0 || idx >= MAX_FILTERS)
         {
             fprintf(stderr, "Failed to retrieve filter next. Make sure you haven't exceeded the maximum filters allowed (%d).\n", MAX_FILTERS);
 
@@ -366,7 +366,17 @@ int main(int argc, char *argv[])
         }
 
         // Set filter at index.
+        if (validate_filter(&new_filter) != 0)
+        {
+            fprintf(stderr, "Invalid filter address, port, or scalar value.\n");
+            return EXIT_FAILURE;
+        }
+        set_filter_defaults(&cfg.filters[idx]);
         cfg.filters[idx] = new_filter;
+        if (cfg.filters_cnt <= idx)
+        {
+            cfg.filters_cnt = idx + 1;
+        }
 
         if (idx >= cfg.filters_cnt)
         {
@@ -376,7 +386,10 @@ int main(int argc, char *argv[])
         // Update filters.
         fprintf(stdout, "Updating filters (index %d)...\n", idx);
 
-        update_filters(map_filters, &cfg);
+        if (update_filters(map_filters, &cfg) != 0)
+        {
+            return EXIT_FAILURE;
+        }
     }
     // Handle IPv4 range drop mode.
     else if (cli.mode == 1)
@@ -405,6 +418,11 @@ int main(int argc, char *argv[])
 
         // Parse IP range.
         ip_range_t range = parse_ip_range(cli.ip);
+        if (!range.success)
+        {
+            fprintf(stderr, "Invalid IPv4 range: %s\n", cli.ip);
+            return EXIT_FAILURE;
+        }
 
         // Attempt to add range.
         if ((ret = add_range_drop(map_range_drop, range.ip, range.cidr)) != 0)
@@ -473,13 +491,8 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
             }
 
-            u128 ip = 0;
-
-            // for (int i = 0; i < 16; i++)
-            // {
-            //     ip = (ip << 8) | addr.s6_addr[i];
-            // }
-            memcpy(&ip, addr.s6_addr, sizeof(ip));
+            u128 ip;
+            memcpy(&ip, &addr, sizeof(ip));
 
             if ((ret = add_block6(map_block6, ip, expires_rel)) != 0)
             {
