@@ -689,18 +689,18 @@ int xdp_prog_main(struct xdp_md *ctx)
             return XDP_DROP;
         }
 
+        u16 dport = ntohs(tcph_j->dest);
+        u16 sport = ntohs(tcph_j->source);
+
         // ---- Step 0a: TCP port 0 — IANA reserved ----
         if (tcph_j->source == 0 || tcph_j->dest == 0)
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_PORT0);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
         }
-
-        u16 dport = ntohs(tcph_j->dest);
-        u16 sport = ntohs(tcph_j->source);
 
         // ---- Step 0b: Junk destination ports ----
         // 注意本机 net.ipv4.ip_local_reserved_ports 需要预留高端口
@@ -739,7 +739,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (junk_port)
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_JUNK_PORT);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -761,7 +761,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (junk_dst)
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_MCAST_DST);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -773,7 +773,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 (tcph_j->ack && dport < 1024 && dport != 53)))
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_SYN_COMBO);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -795,7 +795,7 @@ int xdp_prog_main(struct xdp_md *ctx)
                 flen > ceil || spoofed_syn_sport)
             {
 #if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
+                junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_BAD_SYN);
 #endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
@@ -807,7 +807,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             !tcph_j->rst && !tcph_j->psh && !tcph_j->urg)
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_NULL_SCAN);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -818,7 +818,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             (tcph_j->fin || tcph_j->psh || tcph_j->urg))
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_STEALTH_SCAN);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -831,7 +831,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             (tcph_j->urg && tcph_j->urg_ptr == 0))
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_BAD_FLAGS);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -842,7 +842,7 @@ int xdp_prog_main(struct xdp_md *ctx)
         if (tcph_j->syn && tcph_j->cwr && (!tcph_j->ack && !tcph_j->ece))
         {
 #if JUNK_FILTER_BLOCK_TIME > 0
-            junk_block_src(iph, iph6, &src_ip6, now);
+            junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_TCP_BAD_CWR);
 #endif
             inc_pkt_stats(stats, STATS_TYPE_DROPPED);
             return XDP_DROP;
@@ -905,7 +905,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             if (!is_loopback)
             {
 #if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
+                junk_block_src(iph, iph6, &src_ip6, now, 0, 0, JUNK_REASON_UDP_MCAST_DST);
 #endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
@@ -969,7 +969,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             if (dport == 0 || sport == 0)
             {
 #if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
+                junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_UDP_PORT0);
 #endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
@@ -979,7 +979,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             if (iph6 && udph_j->check == 0)
             {
 #if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
+                junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_UDP_V6_ZERO_CSUM);
 #endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;
@@ -1048,7 +1048,7 @@ int xdp_prog_main(struct xdp_md *ctx)
             if (junk_port && sport != 53)
             {
 #if JUNK_FILTER_BLOCK_TIME > 0
-                junk_block_src(iph, iph6, &src_ip6, now);
+                junk_block_src(iph, iph6, &src_ip6, now, sport, dport, JUNK_REASON_UDP_JUNK_PORT);
 #endif
                 inc_pkt_stats(stats, STATS_TYPE_DROPPED);
                 return XDP_DROP;

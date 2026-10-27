@@ -134,7 +134,39 @@ int hdl_filters_rb_event(void* ctx, void* data, size_t sz)
     config__t* cfg = (config__t*)ctx;
     filter_log_event_t* e = (filter_log_event_t*)data;
 
-    if (sz < sizeof(*e) || e->filter_id < 0 || e->filter_id >= MAX_FILTERS)
+    const char* protocol_str = get_protocol_str_by_id(e->protocol);
+
+    char src_ip_str[INET6_ADDRSTRLEN];
+    char dst_ip_str[INET6_ADDRSTRLEN];
+
+    if (memcmp(e->src_ip6, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) != 0)
+    {
+        inet_ntop(AF_INET6, e->src_ip6, src_ip_str, sizeof(src_ip_str));
+        inet_ntop(AF_INET6, e->dst_ip6, dst_ip_str, sizeof(dst_ip_str));
+    }
+    else
+    {
+        inet_ntop(AF_INET, &e->src_ip, src_ip_str, sizeof(src_ip_str));
+        inet_ntop(AF_INET, &e->dst_ip, dst_ip_str, sizeof(dst_ip_str));
+    }
+
+    // 负数 filter_id 代表 junk_block_src 前置拦截并拉黑事件
+    if (e->filter_id < 0)
+    {
+        int reason = -e->filter_id;
+        int block_time = 0;
+#ifdef JUNK_FILTER_BLOCK_TIME
+        block_time = JUNK_FILTER_BLOCK_TIME;
+#endif
+        log_msg(cfg, 0, 0, "[JUNK %d:%s] Blocked %s packet '%s:%d' => '%s:%d' (Junk Block Time => %d, length => %d)...",
+                reason, get_junk_reason_str(reason), protocol_str,
+                src_ip_str, ntohs(e->src_port), dst_ip_str, ntohs(e->dst_port),
+                block_time, e->length);
+        return 0;
+    }
+
+    // if (sz < sizeof(*e) || e->filter_id < 0 || e->filter_id >= MAX_FILTERS)
+    if (sz < sizeof(*e) || e->filter_id >= MAX_FILTERS)
     {
         return 1;
     }
@@ -159,28 +191,12 @@ int hdl_filters_rb_event(void* ctx, void* data, size_t sz)
         return 1;
     }
 
-    char src_ip_str[INET6_ADDRSTRLEN];
-    char dst_ip_str[INET6_ADDRSTRLEN];
-
-    if (memcmp(e->src_ip6, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) != 0)
-    {
-        inet_ntop(AF_INET6, e->src_ip6, src_ip_str, sizeof(src_ip_str));
-        inet_ntop(AF_INET6, e->dst_ip6, dst_ip_str, sizeof(dst_ip_str));
-    }
-    else
-    {
-        inet_ntop(AF_INET, &e->src_ip, src_ip_str, sizeof(src_ip_str));
-        inet_ntop(AF_INET, &e->dst_ip, dst_ip_str, sizeof(dst_ip_str));
-    }
-
     char* action = "Dropped";
 
     if (filter->action == 1)
     {
         action = "Passed";
     }
-
-    const char* protocol_str = get_protocol_str_by_id(e->protocol);
 
     // log_msg(cfg, 0, 0, "[FILTER %d] %s %s packet '%s:%d' => '%s:%d' (IP PPS => %llu, IP BPS => %llu, Flow PPS => %llu, Flow BPS => %llu Filter Block Time => %llu, length => %d)...", e->filter_id + 1, action, protocol_str, src_ip_str, htons(e->src_port), dst_ip_str, htons(e->dst_port), e->ip_pps, e->ip_bps, e->flow_pps, e->flow_bps, filter->block_time, e->length);
     // log_msg(cfg, 0, 0, "[FILTER %d] %s %s packet '%s:%d' => '%s:%d' (IP PPS => %llu, IP BPS => %llu, Flow PPS => %llu, Flow BPS => %llu Filter Block Time => %d, Filter Allow Time => %d, length => %d)...", e->filter_id + 1, action, protocol_str, src_ip_str, htons(e->src_port), dst_ip_str, htons(e->dst_port), e->ip_pps, e->ip_bps, e->flow_pps, e->flow_bps, filter->block_time, filter->allow_time, e->length);

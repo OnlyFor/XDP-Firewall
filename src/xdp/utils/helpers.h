@@ -45,10 +45,27 @@ static __always_inline int check_ip_range_drop(u32 ip);
 // More Info: https://stackoverflow.com/questions/24289599/always-inline-does-not-work-when-function-is-implemented-in-different-file
 #include "helpers.c"
 
+// 前置 Junk 过滤器拉黑原因码（在日志事件中以负数 filter_id = -reason 传递）
+#define JUNK_REASON_TCP_PORT0          1   // TCP 源或目的端口为 0
+#define JUNK_REASON_TCP_JUNK_PORT      2   // TCP 扫描常见高危/垃圾端口
+#define JUNK_REASON_TCP_MCAST_DST      3   // TCP 目的地址为组播/广播
+#define JUNK_REASON_TCP_SYN_COMBO      4   // TCP 非法 SYN 标志组合或 SYN+ACK 反射
+#define JUNK_REASON_TCP_BAD_SYN        5   // TCP 畸形 SYN (doff<6 / win=0 / 超长 / 伪造源端口)
+#define JUNK_REASON_TCP_NULL_SCAN      6   // TCP NULL 扫描 (全标志位为 0)
+#define JUNK_REASON_TCP_STEALTH_SCAN   7   // TCP 慢速隐蔽扫描 (无 SYN/ACK/RST 的 FIN/PSH/URG)
+#define JUNK_REASON_TCP_BAD_FLAGS      8   // TCP 非法 RST/FIN/URG 组合或 URG_PTR=0
+#define JUNK_REASON_TCP_BAD_CWR        9   // TCP 非法 SYN+CWR 握手包
+#define JUNK_REASON_UDP_MCAST_DST      10  // UDP 外部发往组播/广播地址
+#define JUNK_REASON_UDP_PORT0          11  // UDP 源或目的端口为 0
+#define JUNK_REASON_UDP_V6_ZERO_CSUM   12  // UDP IPv6 零校验和 (违反 RFC 8200)
+#define JUNK_REASON_UDP_JUNK_PORT      13  // UDP 扫描常见反射/垃圾端口
+
 #if defined(ENABLE_UDP_JUNK_FILTER) || defined(ENABLE_TCP_JUNK_FILTER)
 #if JUNK_FILTER_BLOCK_TIME > 0
-static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* iph6, u128* src_ip6, u64 now)
+static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* iph6, u128* src_ip6, u64 now, u16 sport, u16 dport, int reason)
 {
+    int did_block = 0;
+
     if (iph)
     {
         u8 src_msb = *((u8 *)&iph->saddr);
@@ -77,6 +94,7 @@ static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* ip
                     u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
                     // bpf_map_update_elem(&map_block, &saddr_b, &expire, BPF_ANY);  // ← 用栈变量
                     bpf_map_update_elem(&map_block, &iph->saddr, &expire, BPF_ANY);  // ← 用栈变量
+                    did_block = 1;
                 }
             }
         }
@@ -98,8 +116,55 @@ static __always_inline void junk_block_src(struct iphdr* iph, struct ipv6hdr* ip
                 {
                     u64 expire = now + (JUNK_FILTER_BLOCK_TIME * NANO_TO_SEC);
                     bpf_map_update_elem(&map_block6, src_ip6, &expire, BPF_ANY);  // src_ip6 已是栈变量，OK
+                    did_block = 1;
                 }
             }
+        }
+    }
+#endif
+
+#if defined(ENABLE_FILTERS) && defined(ENABLE_FILTER_LOGGING)
+    if (did_block)
+    {
+        filter_log_event_t *e = bpf_ringbuf_reserve(&map_filter_log, sizeof(*e), 0);
+        if (e)
+        {
+            e->ts = now;
+            e->filter_id = -reason;
+            e->src_port = htons(sport);
+            e->dst_port = htons(dport);
+            e->ip_pps = 0;
+            e->ip_bps = 0;
+            e->flow_pps = 0;
+            e->flow_bps = 0;
+
+            if (iph)
+            {
+                e->src_ip = iph->saddr;
+                e->dst_ip = iph->daddr;
+                e->src_ip6[0] = 0;
+                e->src_ip6[1] = 0;
+                e->src_ip6[2] = 0;
+                e->src_ip6[3] = 0;
+                e->dst_ip6[0] = 0;
+                e->dst_ip6[1] = 0;
+                e->dst_ip6[2] = 0;
+                e->dst_ip6[3] = 0;
+                e->protocol = iph->protocol;
+                e->length = (int)ntohs(iph->tot_len) + 14;
+            }
+#ifdef ENABLE_IPV6
+            else if (iph6)
+            {
+                e->src_ip = 0;
+                e->dst_ip = 0;
+                __builtin_memcpy(e->src_ip6, iph6->saddr.in6_u.u6_addr32, sizeof(e->src_ip6));
+                __builtin_memcpy(e->dst_ip6, iph6->daddr.in6_u.u6_addr32, sizeof(e->dst_ip6));
+                e->protocol = (iph6->nexthdr == 44) ? IPPROTO_UDP : iph6->nexthdr;
+                e->length = (int)ntohs(iph6->payload_len) + 54;
+            }
+#endif
+            bpf_ringbuf_submit(e, 0);
         }
     }
 #endif
