@@ -7,12 +7,21 @@
 #include <loader/utils/xdp.h>
 #include <loader/utils/config.h>
 
+#include <time.h>
 #include <rule_del/utils/cli.h>
 
 // These are required due to being extern with Loader.
 // To Do: Figure out a way to not require the below without requiring separate object files.
 int cont = 0;
 int doing_stats = 0;
+
+// 与内核 bpf_ktime_get_ns() 完全一致的单调时钟（纳秒）
+static u64 get_ktime_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (u64)ts.tv_sec * 1000000000ULL + (u64)ts.tv_nsec;
+}
 
 int main(int argc, char *argv[])
 {
@@ -33,7 +42,7 @@ int main(int argc, char *argv[])
         printf("OPTIONS:\n");
         printf("  -c, --cfg         The path to the config file (default /etc/xdpfw/xdpfw.conf).\n");
         printf("  -s, --save        Saves the new config to file system.\n");
-        printf("  -m, --mode        The mode to use (0 = filters, 1 = IPv4 range drop, 2 = IP block map).\n");
+        printf("  -m, --mode        The mode to use (0 = filters, 1 = IPv4 range drop, 2 = IP block map, 3 = GC & stats all maps, 4 = IP allow map).\n");
         printf("  -i, --idx         The filters index to remove when using filters mode (0) (index starts from 1; retrieve index using xdpfw -l).\n");
         printf("  -d, --ip          The IP range or single IP to use (for modes 1 and 2).\n");
         printf("  -v, --v6          If set, parses IP address as IPv6 when removing from block map (for mode 2).\n");
@@ -168,7 +177,7 @@ int main(int argc, char *argv[])
         }
     }
     // Handle block map mode.
-    else
+    else if (cli.mode == 2)
     {
         printf("Using source IP block mode (2)...\n");
 
@@ -241,6 +250,313 @@ int main(int argc, char *argv[])
 
             printf("Deleted IP '%s'...\n", cli.ip);
         }
+    }
+    // Handle GC & real-time stats mode (mode 3).
+    else if (cli.mode == 3)
+    {
+        printf("Running GC & consistency cleanup on pinned BPF maps (mode 3)...\n");
+
+        u64 now = get_ktime_ns();
+
+        int map_block     = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_block");
+        int map_allow     = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow");
+        int map_allow_ip  = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow_ip");
+        int map_block6    = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_block6");
+        int map_allow6    = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow6");
+        int map_allow_ip6 = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow_ip6");
+
+        // 1. GC IPv4 map_block (删除已到期黑名单)
+        if (map_block >= 0)
+        {
+            u32 cur_k = 0, next_k = 0;
+            u64 exp = 0;
+            u64 active = 0, expired = 0;
+            int has_cur = (bpf_map_get_next_key(map_block, NULL, &cur_k) == 0);
+
+            while (has_cur)
+            {
+                int has_next = (bpf_map_get_next_key(map_block, &cur_k, &next_k) == 0);
+                if (bpf_map_lookup_elem(map_block, &cur_k, &exp) == 0)
+                {
+                    if (exp > 0 && now > exp)
+                    {
+                        bpf_map_delete_elem(map_block, &cur_k);
+                        expired++;
+                    }
+                    else
+                    {
+                        active++;
+                    }
+                }
+                cur_k = next_k;
+                has_cur = has_next;
+            }
+            printf("  [map_block]     active: %-6llu | expired_del: %-6llu\n", active, expired);
+        }
+
+        // 2. GC IPv4 map_allow_ip (删除已到期，或已被 map_block 封禁的单 IP 白名单)
+        if (map_allow_ip >= 0)
+        {
+            u32 cur_k = 0, next_k = 0;
+            u64 exp = 0, blk_exp = 0;
+            u64 active = 0, expired = 0, conflict = 0;
+            int has_cur = (bpf_map_get_next_key(map_allow_ip, NULL, &cur_k) == 0);
+
+            while (has_cur)
+            {
+                int has_next = (bpf_map_get_next_key(map_allow_ip, &cur_k, &next_k) == 0);
+                if (bpf_map_lookup_elem(map_allow_ip, &cur_k, &exp) == 0)
+                {
+                    if (now >= exp)
+                    {
+                        bpf_map_delete_elem(map_allow_ip, &cur_k);
+                        expired++;
+                    }
+                    else if (map_block >= 0 && bpf_map_lookup_elem(map_block, &cur_k, &blk_exp) == 0 &&
+                                (blk_exp == 0 || blk_exp > now))
+                    {
+                        bpf_map_delete_elem(map_allow_ip, &cur_k);
+                        conflict++;
+                    }
+                    else
+                    {
+                        active++;
+                    }
+                }
+                cur_k = next_k;
+                has_cur = has_next;
+            }
+            printf("  [map_allow_ip]  active: %-6llu | expired_del: %-6llu | blocked_del: %-6llu\n", active, expired, conflict);
+        }
+
+        // 3. GC IPv4 map_allow (删除已到期，或源 IP 已不在 map_allow_ip 中的孤儿五元组)
+        if (map_allow >= 0)
+        {
+            allow_key4_t cur_k = {0}, next_k = {0};
+            u64 exp = 0, ip_exp = 0;
+            u64 active = 0, expired = 0, orphan = 0;
+            int has_cur = (bpf_map_get_next_key(map_allow, NULL, &cur_k) == 0);
+
+            while (has_cur)
+            {
+                int has_next = (bpf_map_get_next_key(map_allow, &cur_k, &next_k) == 0);
+                if (bpf_map_lookup_elem(map_allow, &cur_k, &exp) == 0)
+                {
+                    if (now >= exp)
+                    {
+                        bpf_map_delete_elem(map_allow, &cur_k);
+                        expired++;
+                    }
+                    else if (map_allow_ip >= 0 &&
+                                (bpf_map_lookup_elem(map_allow_ip, &cur_k.src_ip, &ip_exp) != 0 || now >= ip_exp))
+                    {
+                        // 单 IP 白名单已被踢出或过期，连带清理该 IP 残留的五元组
+                        bpf_map_delete_elem(map_allow, &cur_k);
+                        orphan++;
+                    }
+                    else
+                    {
+                        active++;
+                    }
+                }
+                cur_k = next_k;
+                has_cur = has_next;
+            }
+            printf("  [map_allow]     active: %-6llu | expired_del: %-6llu | orphan_del:  %-6llu\n", active, expired, orphan);
+        }
+
+        // 4. GC IPv6 map_block6
+        if (map_block6 >= 0)
+        {
+            u128 cur_k = 0, next_k = 0;
+            u64 exp = 0;
+            u64 active = 0, expired = 0;
+            int has_cur = (bpf_map_get_next_key(map_block6, NULL, &cur_k) == 0);
+
+            while (has_cur)
+            {
+                int has_next = (bpf_map_get_next_key(map_block6, &cur_k, &next_k) == 0);
+                if (bpf_map_lookup_elem(map_block6, &cur_k, &exp) == 0)
+                {
+                    if (exp > 0 && now > exp)
+                    {
+                        bpf_map_delete_elem(map_block6, &cur_k);
+                        expired++;
+                    }
+                    else
+                    {
+                        active++;
+                    }
+                }
+                cur_k = next_k;
+                has_cur = has_next;
+            }
+            printf("  [map_block6]    active: %-6llu | expired_del: %-6llu\n", active, expired);
+        }
+
+        // 5. GC IPv6 map_allow_ip6
+        if (map_allow_ip6 >= 0)
+        {
+            u128 cur_k = 0, next_k = 0;
+            u64 exp = 0, blk_exp = 0;
+            u64 active = 0, expired = 0, conflict = 0;
+            int has_cur = (bpf_map_get_next_key(map_allow_ip6, NULL, &cur_k) == 0);
+
+            while (has_cur)
+            {
+                int has_next = (bpf_map_get_next_key(map_allow_ip6, &cur_k, &next_k) == 0);
+                if (bpf_map_lookup_elem(map_allow_ip6, &cur_k, &exp) == 0)
+                {
+                    if (now >= exp)
+                    {
+                        bpf_map_delete_elem(map_allow_ip6, &cur_k);
+                        expired++;
+                    }
+                    else if (map_block6 >= 0 && bpf_map_lookup_elem(map_block6, &cur_k, &blk_exp) == 0 &&
+                                (blk_exp == 0 || blk_exp > now))
+                    {
+                        bpf_map_delete_elem(map_allow_ip6, &cur_k);
+                        conflict++;
+                    }
+                    else
+                    {
+                        active++;
+                    }
+                }
+                cur_k = next_k;
+                has_cur = has_next;
+            }
+            printf("  [map_allow_ip6] active: %-6llu | expired_del: %-6llu | blocked_del: %-6llu\n", active, expired, conflict);
+        }
+
+        // 6. GC IPv6 map_allow6
+        if (map_allow6 >= 0)
+        {
+            allow_key6_t cur_k = {0}, next_k = {0};
+            u64 exp = 0, ip_exp = 0;
+            u64 active = 0, expired = 0, orphan = 0;
+            int has_cur = (bpf_map_get_next_key(map_allow6, NULL, &cur_k) == 0);
+
+            while (has_cur)
+            {
+                int has_next = (bpf_map_get_next_key(map_allow6, &cur_k, &next_k) == 0);
+                if (bpf_map_lookup_elem(map_allow6, &cur_k, &exp) == 0)
+                {
+                    if (now >= exp)
+                    {
+                        bpf_map_delete_elem(map_allow6, &cur_k);
+                        expired++;
+                    }
+                    else if (map_allow_ip6 >= 0 &&
+                                (bpf_map_lookup_elem(map_allow_ip6, &cur_k.src_ip6, &ip_exp) != 0 || now >= ip_exp))
+                    {
+                        bpf_map_delete_elem(map_allow6, &cur_k);
+                        orphan++;
+                    }
+                    else
+                    {
+                        active++;
+                    }
+                }
+                cur_k = next_k;
+                has_cur = has_next;
+            }
+            printf("  [map_allow6]    active: %-6llu | expired_del: %-6llu | orphan_del:  %-6llu\n", active, expired, orphan);
+        }
+    }
+    // Handle allow map single-IP eviction mode (mode 4: 删除某 IP 的白名单及所有关联五元组).
+    else if (cli.mode == 4)
+    {
+        printf("Using source IP allow-evict mode (4)...\n");
+
+        if (!cli.ip)
+        {
+            fprintf(stderr, "No source IP address specified. Please set an IP using -d, --ip arguments.\n");
+
+            return EXIT_FAILURE;
+        }
+
+        if (cli.v6)
+        {
+            struct in6_addr addr;
+            if ((ret = inet_pton(AF_INET6, cli.ip, &addr)) != 1)
+            {
+                fprintf(stderr, "Failed to parse IPv6 address '%s'.\n", cli.ip);
+                return EXIT_FAILURE;
+            }
+
+            u128 ip6 = 0;
+            memcpy(&ip6, addr.s6_addr, sizeof(ip6));
+
+            int map_allow_ip6 = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow_ip6");
+            int map_allow6    = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow6");
+
+            if (map_allow_ip6 >= 0)
+            {
+                bpf_map_delete_elem(map_allow_ip6, &ip6);
+            }
+
+            u64 del_flows = 0;
+            if (map_allow6 >= 0)
+            {
+                allow_key6_t cur_k = {0}, next_k = {0};
+                int has_cur = (bpf_map_get_next_key(map_allow6, NULL, &cur_k) == 0);
+                while (has_cur)
+                {
+                    int has_next = (bpf_map_get_next_key(map_allow6, &cur_k, &next_k) == 0);
+                    if (cur_k.src_ip6 == ip6)
+                    {
+                        bpf_map_delete_elem(map_allow6, &cur_k);
+                        del_flows++;
+                    }
+                    cur_k = next_k;
+                    has_cur = has_next;
+                }
+            }
+            printf("Removed IPv6 '%s' from allow_ip6 and deleted %llu flow(s) from map_allow6.\n", cli.ip, del_flows);
+        }
+        else
+        {
+            struct in_addr addr;
+            if ((ret = inet_pton(AF_INET, cli.ip, &addr)) != 1)
+            {
+                fprintf(stderr, "Failed to parse IPv4 address '%s'.\n", cli.ip);
+                return EXIT_FAILURE;
+            }
+
+            u32 ip4 = addr.s_addr;
+            int map_allow_ip = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow_ip");
+            int map_allow    = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow");
+
+            if (map_allow_ip >= 0)
+            {
+                bpf_map_delete_elem(map_allow_ip, &ip4);
+            }
+
+            u64 del_flows = 0;
+            if (map_allow >= 0)
+            {
+                allow_key4_t cur_k = {0}, next_k = {0};
+                int has_cur = (bpf_map_get_next_key(map_allow, NULL, &cur_k) == 0);
+                while (has_cur)
+                {
+                    int has_next = (bpf_map_get_next_key(map_allow, &cur_k, &next_k) == 0);
+                    if (cur_k.src_ip == ip4)
+                    {
+                        bpf_map_delete_elem(map_allow, &cur_k);
+                        del_flows++;
+                    }
+                    cur_k = next_k;
+                    has_cur = has_next;
+                }
+            }
+            printf("Removed IPv4 '%s' from allow_ip and deleted %llu flow(s) from map_allow.\n", cli.ip, del_flows);
+        }
+    }
+    else
+    {
+        fprintf(stderr, "Invalid mode '%d'. Valid modes: 0 (filters), 1 (range), 2 (block IP), 3 (GC all), 4 (allow IP).\n", cli.mode);
+        return EXIT_FAILURE;
     }
 
     if (cli.save)
