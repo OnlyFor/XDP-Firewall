@@ -486,7 +486,7 @@ int main(int argc, char *argv[])
             }
 
             u128 ip6 = 0;
-            memcpy(&ip6, addr.s6_addr, sizeof(ip6));
+            memcpy(&ip6, &addr, sizeof(ip6));
 
             int map_allow_ip6 = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow_ip6");
             int map_allow6    = get_map_fd_pin(XDP_MAP_PIN_DIR, "map_allow6");
