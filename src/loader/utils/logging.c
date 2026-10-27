@@ -120,6 +120,28 @@ void poll_filters_rb(struct ring_buffer* rb)
     }
 }
 
+
+static const char* get_junk_reason_str(int reason)
+{
+    switch (reason)
+    {
+        case 1:  return "TCP_PORT0";
+        case 2:  return "TCP_JUNK_PORT";
+        case 3:  return "TCP_MCAST_DST";
+        case 4:  return "TCP_SYN_COMBO";
+        case 5:  return "TCP_BAD_SYN";
+        case 6:  return "TCP_NULL_SCAN";
+        case 7:  return "TCP_STEALTH_SCAN";
+        case 8:  return "TCP_BAD_FLAGS";
+        case 9:  return "TCP_BAD_CWR";
+        case 10: return "UDP_MCAST_DST";
+        case 11: return "UDP_PORT0";
+        case 12: return "UDP_V6_ZERO_CSUM";
+        case 13: return "UDP_JUNK_PORT";
+        default: return "JUNK_UNKNOWN";
+    }
+}
+
 /**
  * Callback for BPF ringbuffer event (filter logging).
  *
